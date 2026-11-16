@@ -40,18 +40,23 @@ WhatsApp delivers free-form messages only to people who messaged your number in 
   reply `TODAY` for the full update, and anyone who chatted recently gets the full update directly.
 
 ### The template (create once)
-Twilio Console → **Messaging → Content Template Builder → Create new**
-- Name: `nse_daily_update` · Type: **Text** · Language: English · Category: **Utility**
-- Body:
-  ```
-  NSE Cockpit · {{1}} close
+With an approved sender, run this on your own machine (credentials stay with you):
+```bash
+export TWILIO_ACCOUNT_SID=AC...  TWILIO_AUTH_TOKEN=...
+python bot/twilio_template.py create          # creates + submits for WhatsApp approval, prints HX…
+python bot/twilio_template.py status HX...    # until it says approved
+```
+Then set `TWILIO_CONTENT_SID` to that `HX…` value (GitHub secret, and Worker secret if deployed).
 
-  {{2}}
+It creates `nse_daily_update` (Utility, English) with this body:
+```
+NSE Cockpit end-of-day update for {{1}}.
 
-  Information only, not investment advice.
-  ```
-- Sample values: `{{1}}` = `14 Nov 2026`, `{{2}}` = `Breadth 1310 up / 1246 down · Gainers: KMEW +3.00% · Watchlist: TCS ₹2,436 (+1.19%)`
-- Submit for WhatsApp approval, then copy its **Content SID** (`HX…`).
+{{2}}
+
+This is the daily NSE market data summary you signed up for. Information only, not investment advice.
+```
+You can also create the same template by hand in Twilio Console → Messaging → Content Template Builder.
 
 Meta decides the category; if it re-classifies the template as Marketing, it still works but costs more per message.
 

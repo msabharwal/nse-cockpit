@@ -126,7 +126,7 @@ export function summaryLine(feed, idx, { watch = [], alerts = 0, replyHint = tru
       return r ? `${s} ${inr(r[1])}${r[2] != null ? ` (${pct(r[2])})` : ""}` : `${s} n/a`;
     }).join(", "));
   }
-  if (alerts) parts.push(`🔔 ${alerts} alert${alerts > 1 ? "s" : ""} triggered`);
+  if (alerts) parts.push(`${alerts} alert${alerts > 1 ? "s" : ""} triggered`);
   let line = parts.join(" · ") || `${feed.n} NSE stocks updated`;
   const hint = replyHint ? " · Reply TODAY for details" : "";
   if (line.length + hint.length > 900) line = line.slice(0, 899 - hint.length) + "…";
