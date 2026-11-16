@@ -915,18 +915,65 @@ def run_pipeline(init_mode: bool = False, exchanges: list[str] = None):
             except Exception as e:
                 log.warning(f"Bulk EOD failed {exchange} {dt}: {e}")
 
-        # ── 1b. yfinance fallback for NSE when EODHD historical data is blocked ──
-        # EODHD bulk-EOD with a past date= requires a paid plan (returns 402).
-        # If init mode produced fewer than 5 cached days, switch to yfinance
-        # which provides full 1-year NSE history for free via Yahoo Finance (.NS).
-        if init_mode and exchange == "NSE":
-            cached_days = len(cache.available_dates(exchange))
-            if cached_days < 5:
-                log.warning(
-                    f"EODHD returned < 5 historical days for {exchange} "
-                    f"(got {cached_days}). Switching to yfinance free backfill…"
-                )
-                yfinance_backfill(exchange, cache, start, today)
+        # ── 1b. yfinance top-up for NSE full market universe ──────────────────
+        # EODHD bulk-EOD only returns the stocks on its plan (typically Nifty 500).
+        # We always augment with yfinance for the remaining NSE universe so the
+        # dashboard shows the full market (~1800+ stocks), not just Nifty 500.
+        # Strategy:
+        #   • Fetch the full NSE symbol list from multiple NSE index CSVs.
+        #   • Identify symbols NOT already in the EODHD cache for today.
+        #   • Fetch those missing symbols via yfinance and merge into cache.
+        if exchange == "NSE":
+            # --- build full NSE universe from index CSVs ---
+            nse_index_urls = [
+                "https://archives.nseindia.com/content/indices/ind_nifty500list.csv",
+                "https://archives.nseindia.com/content/indices/ind_niftytotalmarket_list.csv",
+                "https://archives.nseindia.com/content/indices/ind_niftymidcap150list.csv",
+                "https://archives.nseindia.com/content/indices/ind_niftysmallcap250list.csv",
+                "https://archives.nseindia.com/content/indices/ind_niftymicrocap250_list.csv",
+                "https://archives.nseindia.com/content/indices/ind_niftylargemidcap250list.csv",
+                "https://archives.nseindia.com/content/indices/ind_niftymidsmallcap400list.csv",
+            ]
+            full_nse_symbols: set[str] = set()
+            from io import StringIO as _SIO
+            for _url in nse_index_urls:
+                try:
+                    _resp = requests.get(_url, timeout=30,
+                                         headers={"User-Agent": "Mozilla/5.0"})
+                    _resp.raise_for_status()
+                    _df = pd.read_csv(_SIO(_resp.text))
+                    _col = [c for c in _df.columns if c.strip().lower() == "symbol"]
+                    _syms = (_df[_col[0]] if _col else _df.iloc[:, 0]).str.strip().dropna()
+                    full_nse_symbols.update(s for s in _syms if s and not s.startswith("#"))
+                    log.info(f"  {_url.split('/')[-1]}: total unique so far = {len(full_nse_symbols)}")
+                except Exception as _e:
+                    log.warning(f"  Could not fetch {_url.split('/')[-1]}: {_e}")
+
+            if full_nse_symbols:
+                log.info(f"Full NSE index universe: {len(full_nse_symbols)} symbols")
+                # Find symbols missing from EODHD cache
+                cached_dates = cache.available_dates(exchange)
+                cached_syms: set[str] = set()
+                if cached_dates:
+                    _latest = cache.load(exchange, cached_dates[-1])
+                    cached_syms = set(_latest["symbol"].str.upper().tolist())
+                missing_syms = sorted(full_nse_symbols - cached_syms)
+                log.info(f"Symbols in full universe but not in EODHD cache: {len(missing_syms)}")
+                if missing_syms:
+                    yfinance_backfill(exchange, cache, start, today,
+                                      symbol_list=missing_syms)
+            else:
+                log.warning("Could not fetch any NSE index CSVs — skipping yfinance top-up")
+
+            # Also fall back fully if init mode produced nothing
+            if init_mode:
+                cached_days = len(cache.available_dates(exchange))
+                if cached_days < 5:
+                    log.warning(
+                        f"EODHD returned < 5 historical days for {exchange} "
+                        f"(got {cached_days}). Running full yfinance backfill…"
+                    )
+                    yfinance_backfill(exchange, cache, start, today)
 
         # ── 2. Build indicator time series ───────────────────────────────
         log.info(f"Computing indicators for {exchange}…")
