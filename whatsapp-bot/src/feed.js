@@ -109,6 +109,30 @@ export function digestText(feed, idx, { watch = [], notices = [] } = {}) {
   return L.join("\n");
 }
 
+// One line for the template's {{2}} variable (variables can't contain line breaks)
+export function summaryLine(feed, idx, { watch = [], alerts = 0, replyHint = true } = {}) {
+  const g = feed.digest || {};
+  const parts = [];
+  if (g.breadth) parts.push(`Breadth ${g.breadth.adv} up / ${g.breadth.dec} down`);
+  const short = (syms) => (syms || []).slice(0, 3).map((s) => idx.get(s)).filter((r) => r && r[2] != null)
+    .map((r) => `${r[0]} ${pct(r[2])}`).join(", ");
+  if (short(g.gainers)) parts.push(`Gainers: ${short(g.gainers)}`);
+  if (short(g.losers)) parts.push(`Losers: ${short(g.losers)}`);
+  const vol = (g.volume || []).slice(0, 3).map((s) => idx.get(s)).filter(Boolean).map((r) => `${r[0]} ${Math.round(r[4])}×`);
+  if (vol.length) parts.push(`Heavy volume: ${vol.join(", ")}`);
+  if (watch.length) {
+    parts.push("Watchlist: " + watch.map((s) => {
+      const r = idx.get(s);
+      return r ? `${s} ${inr(r[1])}${r[2] != null ? ` (${pct(r[2])})` : ""}` : `${s} n/a`;
+    }).join(", "));
+  }
+  if (alerts) parts.push(`🔔 ${alerts} alert${alerts > 1 ? "s" : ""} triggered`);
+  let line = parts.join(" · ") || `${feed.n} NSE stocks updated`;
+  const hint = replyHint ? " · Reply TODAY for details" : "";
+  if (line.length + hint.length > 900) line = line.slice(0, 899 - hint.length) + "…";
+  return line + hint;
+}
+
 // ── Alerts ───────────────────────────────────────────────────────────────────
 const KIND_LABEL = { above: "price above", below: "price below", rsi_above: "RSI above", rsi_below: "RSI below" };
 export const alertLabel = (a) => `${a.symbol} ${KIND_LABEL[a.kind]} ${a.kind.startsWith("rsi") ? a.value : inr(a.value)}`;

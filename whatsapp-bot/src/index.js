@@ -1,15 +1,15 @@
 // NSE Cockpit WhatsApp bot — Cloudflare Worker
 //
-//   GET  /webhook    Meta webhook verification
-//   POST /webhook    incoming WhatsApp messages
+//   GET  /webhook    Meta webhook verification (only when using Meta directly)
+//   POST /webhook    incoming WhatsApp messages (Twilio form posts or Meta JSON)
 //   POST /broadcast  evening update (called by GitHub Actions after the pipeline)
 //   GET  /           health check
 
 import {
-  getFeed, normSymbol, suggest, stockCard, digestText, stockLine, dateLabel,
+  getFeed, normSymbol, suggest, stockCard, digestText, stockLine, dateLabel, summaryLine,
   alertLabel, alertFired, alertNotice, FOOTER,
 } from "./feed.js";
-import { sendText, sendTemplate, markRead, verifySignature } from "./whatsapp.js";
+import { sendText, sendTemplate, hasTemplate, markRead, verifyMeta, verifyTwilio } from "./whatsapp.js";
 import { askClaude } from "./claude.js";
 
 const WINDOW_MS = 23.5 * 60 * 60 * 1000; // stay just inside WhatsApp's 24h reply window
@@ -48,26 +48,61 @@ function verifyWebhook(url, env) {
 
 async function webhook(request, env, ctx) {
   const raw = await request.text();
-  if (!(await verifySignature(env, raw, request.headers.get("x-hub-signature-256")))) {
-    return new Response("Bad signature", { status: 401 });
+  const isTwilio = (request.headers.get("content-type") || "").includes("application/x-www-form-urlencoded");
+  let messages;
+
+  if (isTwilio) {
+    const params = new URLSearchParams(raw);
+    if (!(await verifyTwilio(env, request.url, params, request.headers.get("x-twilio-signature")))) {
+      return new Response("Bad signature", { status: 401 });
+    }
+    messages = [{
+      id: params.get("MessageSid"),
+      phone: (params.get("From") || "").replace(/\D/g, ""),
+      name: params.get("ProfileName"),
+      text: (params.get("ButtonText") || params.get("Body") || "").trim(),
+    }];
+  } else {
+    if (!(await verifyMeta(env, raw, request.headers.get("x-hub-signature-256")))) {
+      return new Response("Bad signature", { status: 401 });
+    }
+    messages = metaMessages(JSON.parse(raw));
   }
-  const body = JSON.parse(raw);
-  // Reply to Meta immediately; do the work in the background
-  ctx.waitUntil(processWebhook(body, env).catch((e) => console.error(e.stack || e)));
-  return new Response("OK");
+
+  // Acknowledge immediately; do the work in the background
+  ctx.waitUntil(processMessages(env, messages).catch((e) => console.error(e.stack || e)));
+  return isTwilio
+    ? new Response("<Response></Response>", { headers: { "content-type": "text/xml" } })
+    : new Response("OK");
 }
 
-async function processWebhook(body, env) {
+function metaMessages(body) {
+  const out = [];
   for (const entry of body.entry || []) {
     for (const change of entry.changes || []) {
       const v = change.value || {};
       const names = Object.fromEntries((v.contacts || []).map((c) => [c.wa_id, c.profile?.name]));
-      for (const msg of v.messages || []) {
-        const fresh = await env.DB.prepare("INSERT OR IGNORE INTO seen (id, at) VALUES (?, ?)").bind(msg.id, now()).run();
-        if (!fresh.meta.changes) continue; // duplicate delivery
-        await handleMessage(env, msg, names[msg.from]);
+      for (const m of v.messages || []) {
+        out.push({
+          id: m.id,
+          phone: m.from,
+          name: names[m.from],
+          text: (m.type === "text" ? m.text?.body :
+            m.type === "button" ? m.button?.text :
+            m.type === "interactive" ? (m.interactive?.button_reply?.title || m.interactive?.list_reply?.title) : "")?.trim() || "",
+        });
       }
     }
+  }
+  return out;
+}
+
+async function processMessages(env, messages) {
+  for (const msg of messages) {
+    if (!msg.id || !msg.phone) continue;
+    const fresh = await env.DB.prepare("INSERT OR IGNORE INTO seen (id, at) VALUES (?, ?)").bind(msg.id, now()).run();
+    if (!fresh.meta.changes) continue; // duplicate delivery
+    await handleMessage(env, msg);
   }
 }
 
@@ -76,8 +111,8 @@ function allowed(env, phone) {
   return list.length === 0 || list.includes(phone);
 }
 
-async function handleMessage(env, msg, name) {
-  const phone = msg.from;
+async function handleMessage(env, msg) {
+  const { phone, name, text } = msg;
   if (!allowed(env, phone)) {
     await sendText(env, phone, "Thanks for your interest! NSE Cockpit is in private beta right now.");
     return;
@@ -89,10 +124,6 @@ async function handleMessage(env, msg, name) {
     `INSERT INTO users (phone, name, subscribed, created_at, last_inbound_at) VALUES (?, ?, 1, ?, ?)
      ON CONFLICT(phone) DO UPDATE SET last_inbound_at = excluded.last_inbound_at, name = COALESCE(excluded.name, users.name)`,
   ).bind(phone, name || null, now(), now()).run();
-
-  const text = msg.type === "text" ? msg.text?.body?.trim() || "" :
-    msg.type === "button" ? msg.button?.text || "" :
-    msg.type === "interactive" ? (msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || "") : "";
 
   const reply = text ? await route(env, phone, text) : "I can only read text messages for now. Send HELP to see what I can do.";
   if (reply) await sendText(env, phone, reply);
@@ -265,21 +296,27 @@ async function broadcast(request, env) {
 
     if (!u.subscribed && !fired.length) continue;
     const inWindow = u.last_inbound_at && Date.now() - Date.parse(u.last_inbound_at) < WINDOW_MS;
+    const watch = (watchBy[u.phone] || []).map((w) => w.symbol);
 
     let ok;
-    if (inWindow) {
+    // No approved template yet (e.g. Twilio sandbox) → always try free-form text
+    if (inWindow || !hasTemplate(env)) {
       const body = u.subscribed
-        ? digestText(feed, idx, { watch: (watchBy[u.phone] || []).map((w) => w.symbol), notices })
+        ? digestText(feed, idx, { watch, notices })
         : `*🔔 Alerts triggered* (${dateLabel(feed.d)} close)\n${notices.join("\n")}\n\n${FOOTER}`;
       ok = await sendText(env, u.phone, body);
       if (ok) await env.DB.prepare("UPDATE users SET pending = NULL WHERE phone = ?").bind(u.phone).run();
       stats.text++;
     } else {
-      // Outside the 24h window WhatsApp only allows an approved template.
-      // The user replies TODAY to get the full update (and pending alerts).
+      // Outside the 24h window WhatsApp only allows an approved template:
+      // {{1}} date, {{2}} one-line summary. Replying TODAY gets the full update
+      // (and opens the window again).
       await env.DB.prepare("UPDATE users SET pending = ? WHERE phone = ?")
         .bind(notices.length ? JSON.stringify(notices.slice(-20)) : null, u.phone).run();
-      ok = await sendTemplate(env, u.phone, [dateLabel(feed.d)]);
+      ok = await sendTemplate(env, u.phone, [
+        dateLabel(feed.d),
+        summaryLine(feed, idx, { watch: u.subscribed ? watch : [], alerts: notices.length }),
+      ]);
       stats.template++;
     }
     if (!ok) stats.failed++;

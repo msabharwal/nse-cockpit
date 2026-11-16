@@ -7,8 +7,8 @@ Why a separate file: signals.json is ~1 MB of pretty-printed JSON. The Worker
 parses the feed on every cold start, so we ship a small array-of-arrays file
 (~150 KB) plus pre-computed digest lists.
 
-Daily % change: signals.json has no previous close, so we compare with the
-previous bot.json (if it exists) before overwriting it.
+Daily % change: compared with the latest output/history snapshot before today
+(falls back to the previous bot.json).
 
 Only technical fields are used. Fundamentals/sector in signals.json are still
 placeholder defaults for most symbols, so the bot does not show them.
@@ -24,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SIGNALS = ROOT / "output" / "signals.json"
 FEED = ROOT / "output" / "bot.json"
+HISTORY = ROOT / "output" / "history"
 
 COLS = ["s", "p", "c", "r", "v", "g", "sl", "a", "w"]
 # s=symbol p=price c=%chg vs prev feed (null if unknown) r=RSI14
@@ -43,11 +44,24 @@ def r(x, nd=2):
     return None if math.isnan(x) or math.isinf(x) else round(x, nd)
 
 
-def load_prev():
+def load_prev(d):
+    """Previous close per symbol: latest output/history snapshot before date d,
+    falling back to the previous bot.json."""
+    snaps = sorted(p for p in HISTORY.glob("*.json") if p.stem < d) if HISTORY.exists() else []
+    if snaps:
+        try:
+            snap = json.loads(snaps[-1].read_text())
+            px = {u["s"]: u["p"] for u in snap["u"] if u.get("p")}
+            if px:
+                return snap["d"], px
+        except Exception:
+            pass
     if not FEED.exists():
         return None, {}
     try:
         prev = json.loads(FEED.read_text())
+        if not prev.get("d") or prev["d"] > d:
+            return None, {}   # stale or out-of-order file — no comparison base
         i_s, i_p = prev["cols"].index("s"), prev["cols"].index("p")
         return prev.get("d"), {row[i_s]: row[i_p] for row in prev["rows"]}
     except Exception:
@@ -57,10 +71,10 @@ def load_prev():
 def main():
     sig = json.loads(SIGNALS.read_text())
     d = sig["trading_date"]
-    prev_d, prev_px = load_prev()
+    prev_d, prev_px = load_prev(d)
 
     if prev_d == d:
-        # Re-run for the same trading date: keep the earlier comparison base
+        # Fallback path re-run for the same trading date: keep the earlier comparison base
         old = json.loads(FEED.read_text())
         prev_d = old.get("prev_d")
         i_s, i_p, i_c = (old["cols"].index(k) for k in ("s", "p", "c"))

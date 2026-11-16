@@ -1,22 +1,88 @@
-# NSE Cockpit — WhatsApp bot
+# NSE Cockpit — WhatsApp (via Twilio)
 
-End-of-day NSE data on WhatsApp: an evening market update, per-stock lookups,
-watchlists, price/RSI alerts, and plain-language Q&A (Claude).
+End-of-day NSE data on WhatsApp, in two stages:
+
+| | **Stage 1 — one-way** | **Stage 2 — two-way bot** |
+|---|---|---|
+| What people get | Evening update after market close | Evening update **plus** symbol lookups, watchlists, alerts, questions answered by Claude |
+| Runs on | GitHub Actions only (`bot/send_whatsapp.py`) | Cloudflare Worker + D1 (this folder), triggered by GitHub Actions |
+| Watchlists | Set by you in a GitHub secret | Each user manages their own by chat |
+| Setup | ~15 minutes | ~45 minutes more |
 
 ```
 GitHub Actions (7 PM IST, Mon–Fri)
   nse_pipeline.py ─► output/signals.json
-  bot/build_feed.py ─► output/bot.json  (compact, ~150 KB, adds % change)
-  git push ─► POST /broadcast {ref: <commit sha>}
-                         │
-Cloudflare Worker (this folder) ◄──── WhatsApp Cloud API webhook (user messages)
-  D1 database: users, watchlists, alerts
-  reads bot.json from GitHub at that commit
-  replies via WhatsApp; free-text questions go to Claude
+  bot/build_feed.py ─► output/bot.json (compact; adds % change vs the previous history snapshot)
+  git push
+  ├─ Stage 1: bot/send_whatsapp.py ─► Twilio ─► WhatsApp      (only while WHATSAPP_BOT_URL is unset)
+  └─ Stage 2: POST <worker>/broadcast ─► Worker ─► Twilio ─► WhatsApp
+                                         ▲
+             people's replies ─► Twilio ─┘ (webhook)
 ```
 
-## What users can send
+The service is deliberately **information-only**: no buy/sell/hold calls, targets or stop-losses.
+SEBI treats those as research recommendations that need RA/IA registration, even on WhatsApp.
+Claude is instructed the same way. Keep the recipient list / `ALLOWED_NUMBERS` to people you
+know until the compliance route for a public launch is settled.
 
+---
+
+## The 24-hour rule (applies to Twilio and Meta alike)
+
+WhatsApp delivers free-form messages only to people who messaged your number in the last
+24 hours. To reach anyone else you must use an **approved template**. So:
+
+- **Testing with the Twilio sandbox:** each tester sends the `join <code>` message, then you can
+  send free-form for 24 hours (sandbox membership itself lasts 3 days, then they re-join).
+  Leave `TWILIO_CONTENT_SID` empty — they get the full update.
+- **Production:** create the template below and set `TWILIO_CONTENT_SID`. People who haven't
+  written in the last 24 hours get a one-line summary via the template. In Stage 2 they can
+  reply `TODAY` for the full update, and anyone who chatted recently gets the full update directly.
+
+### The template (create once)
+Twilio Console → **Messaging → Content Template Builder → Create new**
+- Name: `nse_daily_update` · Type: **Text** · Language: English · Category: **Utility**
+- Body:
+  ```
+  NSE Cockpit · {{1}} close
+
+  {{2}}
+
+  Information only, not investment advice.
+  ```
+- Sample values: `{{1}}` = `14 Nov 2026`, `{{2}}` = `Breadth 1310 up / 1246 down · Gainers: KMEW +3.00% · Watchlist: TCS ₹2,436 (+1.19%)`
+- Submit for WhatsApp approval, then copy its **Content SID** (`HX…`).
+
+Meta decides the category; if it re-classifies the template as Marketing, it still works but costs more per message.
+
+---
+
+## Stage 1 — one-way from GitHub Actions
+
+1. **Twilio:** use your sandbox number to test (Console → Messaging → Try it out → Send a WhatsApp
+   message), or your approved WhatsApp sender for production.
+2. **GitHub** → repo → Settings → Secrets and variables → Actions → add:
+
+   | Secret | Example |
+   |---|---|
+   | `TWILIO_ACCOUNT_SID` | `AC…` |
+   | `TWILIO_AUTH_TOKEN` | from the Twilio Console home page |
+   | `TWILIO_WHATSAPP_FROM` | `+14155238886` (sandbox) or your sender number |
+   | `WHATSAPP_RECIPIENTS` | `+919812345678=TCS,INFY,RELIANCE; +919811111111=HDFCBANK` |
+   | `TWILIO_CONTENT_SID` | optional — `HX…` once the template is approved |
+
+   Each recipient can have its own watchlist after `=`; separate people with `;`.
+3. That's it: the next pipeline run sends the update. To test now, run the workflow manually
+   (Actions → NSE Daily Pipeline → Run workflow), or locally:
+   ```bash
+   WHATSAPP_RECIPIENTS="+919812345678=TCS" python bot/send_whatsapp.py --dry-run   # prints, sends nothing
+   ```
+
+---
+
+## Stage 2 — two-way bot (Cloudflare Worker)
+
+### What users can send
 | Message | Reply |
 |---|---|
 | `hi` / `help` | command list |
@@ -27,81 +93,64 @@ Cloudflare Worker (this folder) ◄──── WhatsApp Cloud API webhook (user
 | `clear alerts`, `stop`, `start` | housekeeping |
 | anything else | answered by Claude using only that day's data |
 
-The bot is deliberately **information-only**: no buy/sell/hold calls, targets or
-stop-losses (SEBI treats those as research recommendations that need RA/IA
-registration). Claude is instructed the same way. Keep `ALLOWED_NUMBERS` set
-(private beta) until the compliance route for a public launch is settled.
-
-## Setup (about 1 hour, mostly Meta's screens)
-
-### 1. Cloudflare (free)
+### Setup
 ```bash
 cd whatsapp-bot
 npm install
-npx wrangler login
-npx wrangler d1 create nse-bot        # copy the database_id into wrangler.toml
-npm run db:init                       # creates the tables
-npx wrangler deploy                   # prints your URL, e.g. https://nse-cockpit-bot.<you>.workers.dev
+npx wrangler login                     # free Cloudflare account
+npx wrangler d1 create nse-bot         # copy the database_id into wrangler.toml
+npm run db:init                        # creates the tables
+npx wrangler secret put TWILIO_ACCOUNT_SID
+npx wrangler secret put TWILIO_AUTH_TOKEN
+npx wrangler secret put TWILIO_WHATSAPP_FROM
+npx wrangler secret put TWILIO_CONTENT_SID     # optional, once approved
+npx wrangler secret put BROADCAST_SECRET       # any long random string
+npx wrangler secret put ANTHROPIC_API_KEY      # optional: enables free-text questions
 ```
-
-### 2. Meta / WhatsApp
-1. Go to developers.facebook.com → **Create app** → type **Business** → add the **WhatsApp** product.
-2. **WhatsApp → API Setup** gives you a free **test number**, a **Phone number ID** and a temporary token.
-   The test number can message up to 5 verified recipients — perfect for the beta.
-   Add your own number as a recipient.
-3. For a token that doesn't expire: Business Settings → **System users** → add one → generate a token
-   with `whatsapp_business_messaging` and `whatsapp_business_management`.
-4. **App settings → Basic** → copy the **App secret**.
-5. **WhatsApp → Configuration → Webhook**:
-   - Callback URL: `https://<your worker>/webhook`
-   - Verify token: any random string (you'll store the same value in step 3)
-   - Subscribe to the **messages** field.
-6. **WhatsApp Manager → Message templates → Create**:
-   - Name `daily_market_update`, category **Utility**, language **English**
-   - Body: `Your NSE Cockpit update for {{1}} is ready. Reply TODAY to see it.`
-   - Sample for {{1}}: `16 Nov 2026`
-
-   This template is only used for people who haven't messaged the bot in the last 24 hours
-   (a WhatsApp rule). Everyone else gets the full update directly.
-7. Later, for a real public number: add your own phone number and complete **Business verification**.
-
-### 3. Worker secrets
+Put the allowed numbers in `ALLOWED_NUMBERS` in `wrangler.toml` (digits with country code,
+comma-separated, e.g. `"919812345678,919811111111"`), then:
 ```bash
-npx wrangler secret put WA_TOKEN            # system-user token
-npx wrangler secret put WA_PHONE_NUMBER_ID
-npx wrangler secret put WA_VERIFY_TOKEN     # same string as in Meta's webhook settings
-npx wrangler secret put WA_APP_SECRET
-npx wrangler secret put BROADCAST_SECRET    # any long random string
-npx wrangler secret put ANTHROPIC_API_KEY   # optional: enables free-text questions
+npx wrangler deploy        # prints https://nse-cockpit-bot.<you>.workers.dev
 ```
-Put your number(s) in `ALLOWED_NUMBERS` in `wrangler.toml` (e.g. `"919812345678"`) and `npx wrangler deploy` again.
 
-### 4. GitHub
-Repo → Settings → Secrets and variables → Actions → add:
-- `WHATSAPP_BOT_URL` = your worker URL (no trailing slash)
-- `BROADCAST_SECRET` = same value as above
+**Point Twilio at the bot:** Twilio Console → Messaging → (sandbox settings, or your WhatsApp
+sender) → **"When a message comes in"** = `https://nse-cockpit-bot.<you>.workers.dev/webhook`, method **POST**.
+Use exactly this URL — Twilio signs requests with it and the bot rejects anything that doesn't match.
 
-The next pipeline run sends the evening update automatically. To test immediately:
+**Switch GitHub over to the bot:** add secrets `WHATSAPP_BOT_URL` (the worker URL, no trailing slash)
+and `BROADCAST_SECRET` (same value as above). Stage 1 then switches itself off automatically.
+Users add their own watchlists by chat; `WHATSAPP_RECIPIENTS` is no longer used.
+
+Test: send `hi` to your Twilio WhatsApp number. To push today's update right away:
 ```bash
 curl -X POST "$WHATSAPP_BOT_URL/broadcast?force=1" -H "Authorization: Bearer $BROADCAST_SECRET" -d '{}'
 ```
 
-### 5. Try it
-Send `hi` to the WhatsApp number.
+---
 
 ## Costs
-- **Cloudflare Workers + D1**: free tier is enough to start. The free plan allows ~50 outbound calls per
-  request, so one broadcast reaches roughly 40 subscribers; Workers Paid ($5/month) lifts that to ~1,000.
-- **WhatsApp**: replies inside the 24h window are free; template messages are charged per message by Meta
-  (check current India rates in WhatsApp Manager).
-- **Claude**: only for free-text questions; `claude-haiku-5-5` by default (change `CLAUDE_MODEL`).
+- **Twilio:** a small per-message fee on top of WhatsApp's own charges. Replies inside the 24-hour
+  window carry no WhatsApp charge; template messages do. Check current India rates in the Twilio Console.
+- **Cloudflare Workers + D1:** free tier to start. The free plan allows ~50 outbound calls per request,
+  so one broadcast reaches roughly 40 people; Workers Paid ($5/month) lifts that to ~1,000.
+- **Claude:** only for free-text questions; `claude-haiku-5-5` by default (`CLAUDE_MODEL`).
 
-## Local test (no accounts needed)
+## Using Meta directly instead of Twilio
+Set `WA_PROVIDER = "meta"` and `WA_TEMPLATE_NAME` in `wrangler.toml`, set the `WA_TOKEN`,
+`WA_PHONE_NUMBER_ID`, `WA_VERIFY_TOKEN` and `WA_APP_SECRET` secrets, and point Meta's webhook at
+`/webhook` (subscribe to `messages`). Same template body, with `{{1}}`/`{{2}}`.
+
+## Local tests (no accounts needed)
 ```bash
-npm test          # simulates conversations + broadcast against output/bot.json
+cd whatsapp-bot
+npm test                         # simulated conversations + broadcasts via Twilio
+PROVIDER=meta npm test           # same via Meta
+python ../bot/send_whatsapp.py --dry-run   # Stage 1 (needs WHATSAPP_RECIPIENTS)
 ```
 
 ## Data notes
 - Only technical fields are shown. P/E, ROE, D/E and sector in `signals.json` are still placeholder
-  defaults for most stocks, so the bot leaves them out until real fundamentals are wired in.
-- % change and breadth appear from the second pipeline run onward (they compare with the previous `bot.json`).
+  defaults for most stocks, so the messages leave them out until real fundamentals are wired in.
+- % change and breadth need a history snapshot from the previous trading day; they appear from the
+  second daily run onward.
+- Long messages are split on line breaks into parts of up to 1,600 characters (Twilio's WhatsApp limit).
