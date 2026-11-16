@@ -48,6 +48,13 @@ import requests
 import pandas as pd
 import numpy as np
 
+# Optional yfinance — installed lazily in yfinance_backfill()
+try:
+    import yfinance as yf
+    _YF_AVAILABLE = True
+except ImportError:
+    _YF_AVAILABLE = False
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
@@ -677,6 +684,174 @@ def get_trading_dates(start: date, end: date) -> list[date]:
     return dates
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# YFINANCE BACKFILL — free historical data for NSE via Yahoo Finance (.NS)
+# Used as fallback when EODHD bulk-EOD returns 402 on historical dates.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def yfinance_backfill(exchange: str, cache: "CacheManager",
+                      start: date, end: date,
+                      symbol_list: list[str] = None) -> int:
+    """
+    Download 1 year of daily OHLCV for all NSE-listed symbols via yfinance
+    (.NS suffix) and write them into the EODHD cache CSV format so the rest
+    of the pipeline sees them identically.
+
+    Returns the number of trading-day CSVs written.
+    """
+    global _YF_AVAILABLE
+    if not _YF_AVAILABLE:
+        log.info("yfinance not installed — installing now…")
+        import subprocess
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--quiet",
+             "--break-system-packages", "yfinance"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        import yfinance as yf
+        _YF_AVAILABLE = True
+
+    import yfinance as yf  # noqa: F811 — may have just been installed
+
+    # Build list of .NS tickers to fetch
+    if symbol_list:
+        tickers = [f"{s}.NS" for s in symbol_list]
+    else:
+        # Fallback: use Nifty 500 as the base universe if we have no symbol list
+        # (a full NSE download would be 2000+ tickers and take hours)
+        log.info("No symbol list provided — fetching Nifty 500 index constituents via yfinance")
+        try:
+            idx = yf.download("^CRSLDX", period="5d", progress=False)  # just to warm up
+        except Exception:
+            pass
+        # Download Nifty 500 as a broad but manageable universe
+        nifty500_url = (
+            "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
+        )
+        try:
+            resp = requests.get(nifty500_url, timeout=30)
+            resp.raise_for_status()
+            from io import StringIO
+            df_idx = pd.read_csv(StringIO(resp.text))
+            # Column name is usually "Symbol"
+            sym_col = [c for c in df_idx.columns if c.strip().lower() == "symbol"]
+            if sym_col:
+                symbol_list = df_idx[sym_col[0]].str.strip().tolist()
+            else:
+                symbol_list = df_idx.iloc[:, 0].str.strip().tolist()
+        except Exception as e:
+            log.warning(f"Could not fetch Nifty 500 list: {e} — using hardcoded 50-stock fallback")
+            symbol_list = [
+                "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
+                "HINDUNILVR", "SBIN", "HDFC", "BHARTIARTL", "KOTAKBANK",
+                "ITC", "LT", "AXISBANK", "ASIANPAINT", "MARUTI",
+                "SUNPHARMA", "TITAN", "ULTRACEMCO", "BAJFINANCE", "WIPRO",
+                "HCLTECH", "POWERGRID", "NTPC", "TECHM", "ONGC",
+                "JSWSTEEL", "TATAMOTORS", "INDUSINDBK", "BPCL", "COALINDIA",
+                "NESTLEIND", "TATASTEEL", "GRASIM", "CIPLA", "DIVISLAB",
+                "DRREDDY", "EICHERMOT", "HEROMOTOCO", "BAJAJ-AUTO", "HINDALCO",
+                "APOLLOHOSP", "ADANIPORTS", "SBILIFE", "HDFCLIFE", "BRITANNIA",
+                "UPL", "TATACONSUM", "SHREECEM", "BAJAJFINSV", "DABUR",
+            ]
+        tickers = [f"{s}.NS" for s in symbol_list]
+
+    start_str = start.strftime("%Y-%m-%d")
+    end_str   = (end + timedelta(days=1)).strftime("%Y-%m-%d")  # yf end is exclusive
+
+    log.info(f"yfinance backfill: {len(tickers)} NSE symbols, {start_str} → {end_str}")
+
+    # Download all tickers in one batch call (yfinance handles the chunking)
+    BATCH = 200   # yfinance handles up to ~1000 but 200 keeps memory low
+    all_data: dict[str, pd.DataFrame] = {}
+    for i in range(0, len(tickers), BATCH):
+        batch = tickers[i:i + BATCH]
+        log.info(f"  Downloading batch {i//BATCH + 1} / {-(-len(tickers)//BATCH)} "
+                 f"({len(batch)} tickers)…")
+        try:
+            raw = yf.download(
+                batch,
+                start=start_str,
+                end=end_str,
+                interval="1d",
+                auto_adjust=True,
+                progress=False,
+                threads=True,
+            )
+            if raw.empty:
+                log.warning(f"  Batch {i//BATCH + 1}: no data returned")
+                continue
+
+            # yf returns MultiIndex columns (field, ticker) when >1 ticker
+            if isinstance(raw.columns, pd.MultiIndex):
+                for ticker in batch:
+                    try:
+                        df_t = raw.xs(ticker, axis=1, level=1).dropna(how="all")
+                        if not df_t.empty:
+                            all_data[ticker] = df_t
+                    except KeyError:
+                        pass
+            else:
+                # Single ticker — raw IS the DataFrame
+                if len(batch) == 1:
+                    all_data[batch[0]] = raw.dropna(how="all")
+
+        except Exception as e:
+            log.warning(f"  Batch download failed: {e}")
+
+    if not all_data:
+        log.error("yfinance returned no data at all — backfill aborted")
+        return 0
+
+    # Pivot: for each trading date, build one CSV row per symbol
+    # Collect all dates across all symbols
+    all_dates_set: set[date] = set()
+    for df_t in all_data.values():
+        for idx_dt in df_t.index:
+            d_obj = idx_dt.date() if hasattr(idx_dt, "date") else idx_dt
+            all_dates_set.add(d_obj)
+
+    all_dates_sorted = sorted(all_dates_set)
+    files_written = 0
+
+    for snap_date in all_dates_sorted:
+        if cache.exists(exchange, snap_date):
+            continue  # already cached (e.g. from EODHD daily run)
+
+        rows = []
+        snap_ts = pd.Timestamp(snap_date)
+        for ticker, df_t in all_data.items():
+            sym = ticker.replace(".NS", "").upper()
+            try:
+                row = df_t.loc[snap_ts]
+            except KeyError:
+                continue
+            close  = float(row.get("Close",  row.get("close",  0)) or 0)
+            open_  = float(row.get("Open",   row.get("open",   close)) or close)
+            high   = float(row.get("High",   row.get("high",   close)) or close)
+            low    = float(row.get("Low",    row.get("low",    close)) or close)
+            volume = float(row.get("Volume", row.get("volume", 0)) or 0)
+            if close <= 0:
+                continue
+            rows.append({
+                "symbol":    sym,
+                "open":      round(open_,  2),
+                "high":      round(high,   2),
+                "low":       round(low,    2),
+                "close":     round(close,  2),
+                "volume":    int(volume),
+                "mktcap_cr": -1,   # not provided by yfinance bulk
+            })
+
+        if rows:
+            df_day = pd.DataFrame(rows)
+            cache.save(exchange, snap_date, df_day)
+            files_written += 1
+
+    log.info(f"✓ yfinance backfill complete: {files_written} day-CSVs written "
+             f"({len(all_data)} symbols had data)")
+    return files_written
+
+
 def run_pipeline(init_mode: bool = False, exchanges: list[str] = None):
     if exchanges is None:
         exchanges = ["NSE"]
@@ -702,17 +877,33 @@ def run_pipeline(init_mode: bool = False, exchanges: list[str] = None):
             start = today - timedelta(days=5)   # a few days back to catch holidays
 
         dates_needed = get_trading_dates(start, today)
+        eodhd_ok = False
         for dt in dates_needed:
             if cache.exists(exchange, dt):
+                eodhd_ok = True
                 continue
             try:
                 records = client.bulk_eod(exchange, dt)
                 df      = bulk_records_to_df(records, exchange)
                 if not df.empty:
                     cache.save(exchange, dt, df)
+                    eodhd_ok = True
                 time.sleep(EODHD_SLEEP)
             except Exception as e:
                 log.warning(f"Bulk EOD failed {exchange} {dt}: {e}")
+
+        # ── 1b. yfinance fallback for NSE when EODHD historical data is blocked ──
+        # EODHD bulk-EOD with a past date= requires a paid plan (returns 402).
+        # If init mode produced fewer than 5 cached days, switch to yfinance
+        # which provides full 1-year NSE history for free via Yahoo Finance (.NS).
+        if init_mode and exchange == "NSE":
+            cached_days = len(cache.available_dates(exchange))
+            if cached_days < 5:
+                log.warning(
+                    f"EODHD returned < 5 historical days for {exchange} "
+                    f"(got {cached_days}). Switching to yfinance free backfill…"
+                )
+                yfinance_backfill(exchange, cache, start, today)
 
         # ── 2. Build indicator time series ───────────────────────────────
         log.info(f"Computing indicators for {exchange}…")
