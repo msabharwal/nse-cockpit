@@ -2,8 +2,17 @@ name: NSE Daily Pipeline
 
 on:
   schedule:
-    - cron: '30 13 * * 1-5'
+    - cron: '30 13 * * 1-5'   # 7:00 PM IST Mon–Fri (13:30 UTC)
   workflow_dispatch:
+    inputs:
+      exchange:
+        description: 'Exchange(s) to run — comma-separated (e.g. NSE,BSE)'
+        required: false
+        default: 'NSE,BSE'
+      init:
+        description: 'Backfill 1 year of history? (true/false)'
+        required: false
+        default: 'false'
 
 permissions:
   contents: write
@@ -20,20 +29,26 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install requests pandas numpy
 
       - name: Run pipeline
+        env:
+          EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
         run: |
-          if [ ! -f output/signals.json ]; then
-            python nse_pipeline.py --init
+          EXCHANGE="${{ github.event.inputs.exchange || 'NSE,BSE' }}"
+          INIT="${{ github.event.inputs.init || 'false' }}"
+          if [ "$INIT" = "true" ] || [ ! -f output/signals.json ]; then
+            echo "Running in INIT mode (backfilling 1 year)…"
+            python nse_pipeline.py --init --exchange "$EXCHANGE"
           else
-            python nse_pipeline.py
+            echo "Running daily update for $EXCHANGE…"
+            python nse_pipeline.py --exchange "$EXCHANGE"
           fi
 
-      - name: Commit signals
+      - name: Commit signals and history
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add output/
-          git diff --staged --quiet || git commit -m "Daily signals $(date -u +%Y-%m-%d)"
+          git diff --staged --quiet || git commit -m "Daily signals $(date -u +%Y-%m-%d) [eodhd]"
           git push
