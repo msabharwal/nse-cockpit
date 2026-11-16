@@ -31,6 +31,14 @@ jobs:
       - name: Install dependencies
         run: pip install requests pandas numpy
 
+      - name: Restore EODHD cache
+        uses: actions/cache@v4
+        with:
+          path: data/eodhd_cache
+          key: eodhd-cache-${{ runner.os }}-${{ hashFiles('nse_pipeline.py') }}
+          restore-keys: |
+            eodhd-cache-${{ runner.os }}-
+
       - name: Run pipeline
         env:
           EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
@@ -44,6 +52,13 @@ jobs:
             echo "Running daily update for $EXCHANGE…"
             python nse_pipeline.py --exchange "$EXCHANGE"
           fi
+
+      - name: Save EODHD cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/eodhd_cache
+          key: eodhd-cache-${{ runner.os }}-${{ hashFiles('nse_pipeline.py') }}
 
       - name: Commit signals and history
         run: |
