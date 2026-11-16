@@ -787,34 +787,68 @@ def run_pipeline(init_mode: bool = False, exchanges: list[str] = None):
     if init_mode:
         all_dates = cache.available_dates(exchanges[0])  # dates we have data for
         log.info(f"Init mode: writing {len(all_dates)} historical snapshots…")
+
+        # ── Performance fix: load entire cache into memory once ──────────
+        # Instead of re-reading CSVs per symbol per date (700k reads), we
+        # build one wide DataFrame: rows = (date, symbol), columns = OHLCV.
+        # Then slicing by date/symbol is a pure in-memory pandas operation.
+        log.info("Loading full cache into memory for fast snapshot generation…")
+        all_frames = []
+        for dt in all_dates:
+            df = cache.load(exchanges[0], dt)
+            if df is not None and not df.empty:
+                df = df.copy()
+                df["_date"] = pd.Timestamp(dt)
+                all_frames.append(df)
+
+        if all_frames:
+            full_cache = pd.concat(all_frames, ignore_index=True)
+            full_cache["symbol"] = full_cache["symbol"].str.upper()
+            full_cache = full_cache.set_index(["_date", "symbol"]).sort_index()
+            log.info(f"Cache loaded: {len(full_cache)} rows across {len(all_dates)} days")
+        else:
+            full_cache = None
+            log.warning("No cache data found — skipping historical snapshots")
+
         for snap_date in all_dates:
             history_file = OUTPUT_DIR / "history" / f"{snap_date.isoformat()}.json"
             if history_file.exists():
                 continue
+            if full_cache is None:
+                continue
+
+            snap_ts = pd.Timestamp(snap_date)
+
+            # Symbols traded on this specific day
+            if snap_ts not in full_cache.index.get_level_values(0):
+                continue
+            day_symbols = full_cache.loc[snap_ts].index.tolist()
+
             # Build per-day indicators using only data up to snap_date
             day_indicators: dict = {}
-            snap_df = cache.load(exchanges[0], snap_date)
-            if snap_df is None or snap_df.empty:
-                continue
-            day_symbols = snap_df["symbol"].str.upper().unique().tolist()
+            # Slice cache: all rows where date <= snap_date
+            hist_slice = full_cache.loc[full_cache.index.get_level_values(0) <= snap_ts]
+
             for symbol in day_symbols:
-                closes  = cache.load_history(exchanges[0], symbol, "close",  HISTORY_DAYS)
-                highs   = cache.load_history(exchanges[0], symbol, "high",   HISTORY_DAYS)
-                lows    = cache.load_history(exchanges[0], symbol, "low",    HISTORY_DAYS)
-                volumes = cache.load_history(exchanges[0], symbol, "volume", HISTORY_DAYS)
-                # Restrict to data available on snap_date
-                closes  = closes[closes.index <= str(snap_date)]
-                highs   = highs.reindex(closes.index).fillna(closes)
-                lows    = lows.reindex(closes.index).fillna(closes)
-                volumes = volumes.reindex(closes.index).fillna(0)
+                try:
+                    sym_data = hist_slice.xs(symbol, level="symbol").sort_index()
+                except KeyError:
+                    continue
+                if sym_data.empty or "close" not in sym_data.columns:
+                    continue
+                closes  = sym_data["close"].dropna()
+                highs   = sym_data["high"].reindex(closes.index).fillna(closes)
+                lows    = sym_data["low"].reindex(closes.index).fillna(closes)
+                volumes = sym_data["volume"].reindex(closes.index).fillna(0)
                 if len(closes) < 15:
                     continue
                 ind = compute_indicators(symbol, highs, lows, closes, volumes)
                 ind["exchange"] = exchanges[0]
                 day_indicators[symbol] = ind
-            # Build a minimal signals dict for this date and write snapshot
+
             day_signals = build_signals_json(exchanges, day_indicators, fund, snap_date)
             write_history_snapshot(day_signals, snap_date)
+
         log.info("✓ All historical snapshots written.")
     else:
         write_history_snapshot(signals, latest_date)
