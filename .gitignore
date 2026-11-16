@@ -1,0 +1,5 @@
+# Daily bhavcopy cache — large CSVs, NOT committed (used locally by pipeline only)
+data/
+*.pyc
+__pycache__/
+.env

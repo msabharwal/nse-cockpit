@@ -810,7 +810,37 @@ def run_pipeline(init_mode: bool = False, exchange: str = "NSE"):
         json.dump(signals, f, indent=2)
     log.info(f"✓ Wrote {SIGNALS_JSON}  ({signals['stock_count']} stocks)")
 
-    # ── 5. Write a summary ────────────────────────────────────────────────
+    # ── 5. Write daily history snapshot ──────────────────────────────────
+    # Compact per-day file: output/history/YYYY-MM-DD.json
+    # Used by the backtest app to get real historical prices for each month.
+    # Fields kept: symbol, price, rsi, vol_ratio, sma10gap, sma100slope, atr_pct, sector
+    # This keeps each file ~150KB vs ~1MB for the full signals.json
+    history_dir = OUTPUT_DIR / "history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    history_date = latest_date.isoformat()   # e.g. "2026-11-15"
+    history_file = history_dir / f"{history_date}.json"
+    if not history_file.exists():            # don't overwrite if already written today
+        compact = [
+            {
+                "s":  r["symbol"],
+                "p":  r["price"],
+                "r":  round(r["rsi"], 2),
+                "v":  round(r["vol_ratio"], 4),
+                "g":  round(r["sma10gap"], 4),
+                "sl": round(r["sma100slope"], 6),
+                "a":  round(r["atr_pct"], 4),
+                "x":  r["sector"],
+            }
+            for r in signals["universe"]
+        ]
+        snapshot = {"d": history_date, "u": compact}
+        with open(history_file, "w") as f:
+            json.dump(snapshot, f, separators=(',', ':'))
+        log.info(f"✓ Wrote history snapshot → {history_file.name}  ({len(compact)} stocks)")
+    else:
+        log.info(f"History snapshot already exists for {history_date}, skipping.")
+
+    # ── 6. Write a summary ────────────────────────────────────────────────
     summary = {
         "last_run":     datetime.now().isoformat(),
         "trading_date": latest_date.isoformat(),
