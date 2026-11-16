@@ -780,8 +780,44 @@ def run_pipeline(init_mode: bool = False, exchanges: list[str] = None):
         json.dump(signals, f, indent=2)
     log.info(f"✓ Wrote {SIGNALS_JSON}  ({signals['stock_count']} stocks)")
 
-    # ── 6. Write daily history snapshot ───────────────────────────────────
-    write_history_snapshot(signals, latest_date)
+    # ── 6. Write daily history snapshot(s) ────────────────────────────────
+    # In init mode: write one snapshot per historical trading day so the
+    # backtest app has real prices going back a full year immediately.
+    # In daily mode: just write today's snapshot.
+    if init_mode:
+        all_dates = cache.available_dates(exchanges[0])  # dates we have data for
+        log.info(f"Init mode: writing {len(all_dates)} historical snapshots…")
+        for snap_date in all_dates:
+            history_file = OUTPUT_DIR / "history" / f"{snap_date.isoformat()}.json"
+            if history_file.exists():
+                continue
+            # Build per-day indicators using only data up to snap_date
+            day_indicators: dict = {}
+            snap_df = cache.load(exchanges[0], snap_date)
+            if snap_df is None or snap_df.empty:
+                continue
+            day_symbols = snap_df["symbol"].str.upper().unique().tolist()
+            for symbol in day_symbols:
+                closes  = cache.load_history(exchanges[0], symbol, "close",  HISTORY_DAYS)
+                highs   = cache.load_history(exchanges[0], symbol, "high",   HISTORY_DAYS)
+                lows    = cache.load_history(exchanges[0], symbol, "low",    HISTORY_DAYS)
+                volumes = cache.load_history(exchanges[0], symbol, "volume", HISTORY_DAYS)
+                # Restrict to data available on snap_date
+                closes  = closes[closes.index <= str(snap_date)]
+                highs   = highs.reindex(closes.index).fillna(closes)
+                lows    = lows.reindex(closes.index).fillna(closes)
+                volumes = volumes.reindex(closes.index).fillna(0)
+                if len(closes) < 15:
+                    continue
+                ind = compute_indicators(symbol, highs, lows, closes, volumes)
+                ind["exchange"] = exchanges[0]
+                day_indicators[symbol] = ind
+            # Build a minimal signals dict for this date and write snapshot
+            day_signals = build_signals_json(exchanges, day_indicators, fund, snap_date)
+            write_history_snapshot(day_signals, snap_date)
+        log.info("✓ All historical snapshots written.")
+    else:
+        write_history_snapshot(signals, latest_date)
 
     # ── 7. Write pipeline status ──────────────────────────────────────────
     summary = {
