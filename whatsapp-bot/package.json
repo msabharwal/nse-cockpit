@@ -1,0 +1,14 @@
+{
+  "name": "nse-cockpit-bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:init": "wrangler d1 execute nse-bot --remote --file=schema.sql",
+    "test": "node test/simulate.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

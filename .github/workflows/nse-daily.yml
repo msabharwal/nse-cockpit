@@ -20,6 +20,10 @@ permissions:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    env:
+      # Set these repo secrets to switch on the WhatsApp evening update
+      WHATSAPP_BOT_URL: ${{ secrets.WHATSAPP_BOT_URL }}
+      BROADCAST_SECRET: ${{ secrets.BROADCAST_SECRET }}
     steps:
       - uses: actions/checkout@v4
 
@@ -45,6 +49,9 @@ jobs:
             python nse_pipeline.py --exchange "$EXCHANGE"
           fi
 
+      - name: Build WhatsApp bot feed
+        run: python bot/build_feed.py
+
       - name: Commit signals and history
         run: |
           git config user.name "github-actions[bot]"
@@ -53,3 +60,13 @@ jobs:
           git diff --staged --quiet || git commit -m "Daily signals $(date -u +%Y-%m-%d) [eodhd]"
           git pull --rebase origin main
           git push
+
+      - name: Send WhatsApp evening update
+        if: ${{ env.WHATSAPP_BOT_URL != '' }}
+        continue-on-error: true   # a WhatsApp problem must never fail the data pipeline
+        run: |
+          # Pin the bot to this exact commit so it never reads a cached older feed
+          curl -fsS --max-time 240 -X POST "$WHATSAPP_BOT_URL/broadcast" \
+            -H "Authorization: Bearer $BROADCAST_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "{\"ref\":\"$(git rev-parse HEAD)\"}"

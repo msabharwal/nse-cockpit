@@ -1,0 +1,28 @@
+name = "nse-cockpit-bot"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+
+[vars]
+FEED_REPO = "msabharwal/nse-cockpit"
+FEED_BRANCH = "main"
+FEED_PATH = "output/bot.json"
+GRAPH_VERSION = "v21.0"
+WA_TEMPLATE_NAME = "daily_market_update"
+WA_TEMPLATE_LANG = "en"
+CLAUDE_MODEL = "claude-haiku-5-5"
+# Comma-separated WhatsApp numbers (country code, digits only) allowed to use the bot.
+# Leave empty to open it to everyone — only do that once the SEBI question is settled.
+ALLOWED_NUMBERS = ""
+
+# Secrets — set with `npx wrangler secret put NAME` (never commit these):
+#   WA_TOKEN            permanent system-user token from Meta Business
+#   WA_PHONE_NUMBER_ID  from WhatsApp > API Setup
+#   WA_VERIFY_TOKEN     any random string; same value goes into Meta's webhook settings
+#   WA_APP_SECRET       Meta app secret (used to verify webhook signatures)
+#   BROADCAST_SECRET    random string; same value goes into GitHub repo secrets
+#   ANTHROPIC_API_KEY   optional — enables free-text questions
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nse-bot"
+database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"
