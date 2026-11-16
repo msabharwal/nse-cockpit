@@ -4,26 +4,36 @@ End-of-day NSE data on WhatsApp, in two stages:
 
 | | **Stage 1 — one-way** | **Stage 2 — two-way bot** |
 |---|---|---|
-| What people get | Evening update after market close | Evening update **plus** symbol lookups, watchlists, alerts, questions answered by Claude |
+| What people get | Morning update (8:15 AM IST) with cockpit picks | Morning update **plus** symbol lookups, watchlists, alerts, questions answered by Claude |
 | Runs on | GitHub Actions only (`bot/send_whatsapp.py`) | Cloudflare Worker + D1 (this folder), triggered by GitHub Actions |
 | Watchlists | Set by you in a GitHub secret | Each user manages their own by chat |
 | Setup | ~15 minutes | ~45 minutes more |
 
 ```
-GitHub Actions (7 PM IST, Mon–Fri)
+Evening — nse-daily.yml (7 PM IST, Mon–Fri)
   nse_pipeline.py ─► output/signals.json
-  bot/build_feed.py ─► output/bot.json (compact; adds % change vs the previous history snapshot)
+  bot/build_feed.py ─► output/bot.json (% change, breadth, cockpit picks)
   git push
+
+Morning — whatsapp-morning.yml (8:15 AM IST, Mon–Fri, skips days already sent)
   ├─ Stage 1: bot/send_whatsapp.py ─► Twilio ─► WhatsApp      (only while WHATSAPP_BOT_URL is unset)
   └─ Stage 2: POST <worker>/broadcast ─► Worker ─► Twilio ─► WhatsApp
                                          ▲
              people's replies ─► Twilio ─┘ (webhook)
 ```
 
-The service is deliberately **information-only**: no buy/sell/hold calls, targets or stop-losses.
-SEBI treats those as research recommendations that need RA/IA registration, even on WhatsApp.
-Claude is instructed the same way. Keep the recipient list / `ALLOWED_NUMBERS` to people you
-know until the compliance route for a public launch is settled.
+**Family use only.** The message includes the cockpit's picks with entry zone, stop-loss and
+target. SEBI treats buy/sell calls with targets as research recommendations that need RA/IA
+registration, even on WhatsApp — so keep the recipient list / `ALLOWED_NUMBERS` to family until
+a compliance route for anything wider is settled. (Claude's free-text answers stay data-only.)
+
+### Cockpit picks
+Built in `bot/build_feed.py` from the cockpit's technical rules (fundamentals are left out while
+they are placeholders):
+- Gates: RSI 45–72 · volume ≥ 1.5× its 20-day average · price above the 10-day SMA but not
+  more than 8% above · rising 100-day SMA · ATR 0.8–6% · price ≥ ₹50, volume ≥ 1 lakh shares · no ETFs
+- Score (0–100): 100-day trend 30 · 10-day momentum 20 · RSI near 60: 25 · volume surge 25
+- Top 8 with score ≥ 65. Entry zone = close ± 0.4×ATR · SL = close − 1.5×ATR · Target = close + 2.5×ATR
 
 ---
 
@@ -77,8 +87,8 @@ Meta decides the category; if it re-classifies the template as Marketing, it sti
    | `TWILIO_CONTENT_SID` | optional — `HX…` once the template is approved |
 
    Each recipient can have its own watchlist after `=`; separate people with `;`.
-3. That's it: the next pipeline run sends the update. To test now, run the workflow manually
-   (Actions → NSE Daily Pipeline → Run workflow), or locally:
+3. That's it: the next morning run sends the update. To test now, run the workflow manually
+   (Actions → WhatsApp Morning Update → Run workflow; set force = true to resend), or locally:
    ```bash
    WHATSAPP_RECIPIENTS="+919812345678=TCS" python bot/send_whatsapp.py --dry-run   # prints, sends nothing
    ```
@@ -91,7 +101,8 @@ Meta decides the category; if it re-classifies the template as Marketing, it sti
 | Message | Reply |
 |---|---|
 | `hi` / `help` | command list |
-| `today` | market update + their watchlist + any triggered alerts |
+| `today` | market update + picks + their watchlist + any triggered alerts |
+| `picks` | the cockpit picks with entry, SL and target |
 | `RELIANCE` (any NSE symbol) | price, % change, RSI, volume vs average, trend, ATR, 52-week position |
 | `watch TCS INFY` / `unwatch TCS` / `list` | watchlist |
 | `alert TCS above 4200`, `alert INFY rsi below 30` | one-shot alerts, checked on each close |
@@ -123,7 +134,7 @@ sender) → **"When a message comes in"** = `https://nse-cockpit-bot.<you>.worke
 Use exactly this URL — Twilio signs requests with it and the bot rejects anything that doesn't match.
 
 **Switch GitHub over to the bot:** add secrets `WHATSAPP_BOT_URL` (the worker URL, no trailing slash)
-and `BROADCAST_SECRET` (same value as above). Stage 1 then switches itself off automatically.
+and `BROADCAST_SECRET` (same value as above). The morning workflow then uses the bot instead of Stage 1.
 Users add their own watchlists by chat; `WHATSAPP_RECIPIENTS` is no longer used.
 
 Test: send `hi` to your Twilio WhatsApp number. To push today's update right away:

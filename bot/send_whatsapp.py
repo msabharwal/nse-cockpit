@@ -20,6 +20,7 @@ Usage:  python bot/send_whatsapp.py [--dry-run]     (stdlib only)
 
 import base64
 import json
+import math
 import os
 import re
 import sys
@@ -31,7 +32,7 @@ from pathlib import Path
 FEED = Path(__file__).resolve().parent.parent / "output" / "bot.json"
 TWILIO_MAX = 1600       # Twilio's per-message body limit for WhatsApp
 VAR_MAX = 900           # keep template variables well under WhatsApp's 1024-char body limit
-FOOTER = "_Information only — not investment advice._"
+FOOTER = "_Model output for family use — not investment advice._"
 
 
 # ── formatting (mirrors whatsapp-bot/src/feed.js) ────────────────────────────
@@ -61,6 +62,19 @@ def date_label(d):
     return f"{dt.day} {dt.strftime('%b %Y')}"
 
 
+def lvl(x):
+    """Compact price for levels: whole rupees above ₹100, else 2 decimals."""
+    return inr(math.floor(x + 0.5)) if x >= 100 else inr(x)   # round half up, same as JS
+
+
+def pick_lines(picks):
+    out = []
+    for i, k in enumerate(picks, 1):
+        out.append(f"{i}. *{k['s']}* {inr(k['close'])} · score {k['score']}")
+        out.append(f"   Entry {lvl(k['entry'][0])}–{lvl(k['entry'][1])} · SL {lvl(k['sl'])} · Target {lvl(k['tgt'])}")
+    return out
+
+
 def stock_line(r):
     s, p, c, rsi = r[0], r[1], r[2], r[3]
     return f"• {s} {inr(p)}" + (f" ({pct(c)})" if c is not None else "") + (
@@ -75,6 +89,10 @@ def digest_text(feed, idx, watch):
         L.append(f"Breadth: {b['adv']} up · {b['dec']} down · {b['unch']} flat")
     L.append(f"{g.get('above_sma10', '–')} of {feed['n']} stocks above their 10-day average")
     L.append(f"RSI ≥ 70: {g.get('overbought', '–')} stocks · RSI ≤ 30: {g.get('oversold', '–')}")
+
+    picks = feed.get("picks") or []
+    if picks:
+        L.extend(["", f"*Cockpit picks* (score ≥ 65, levels from ATR)", *pick_lines(picks)])
 
     def section(title, syms, fmt=stock_line):
         rows = [idx[s] for s in syms or [] if s in idx]
@@ -96,6 +114,11 @@ def summary_line(feed, idx, watch):
     """Single line (template variables can't contain line breaks)."""
     g = feed.get("digest") or {}
     parts = []
+    picks = feed.get("picks") or []
+    if picks:
+        parts.append("Picks: " + "; ".join(
+            f"{k['s']} ({k['score']}) entry {lvl(k['entry'][0])}-{lvl(k['entry'][1])} SL {lvl(k['sl'])} TGT {lvl(k['tgt'])}"
+            for k in picks))
     b = g.get("breadth")
     if b:
         parts.append(f"Breadth {b['adv']} up / {b['dec']} down")

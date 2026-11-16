@@ -1,0 +1,85 @@
+name: WhatsApp Morning Update
+
+# Sends the previous trading day's update (built by the evening pipeline in
+# output/bot.json) before the market opens. See whatsapp-bot/README.md.
+
+on:
+  schedule:
+    - cron: '45 2 * * 1-5'   # 8:15 AM IST Mon–Fri (02:45 UTC), before the 9:15 open
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Send even if this trading day was already sent (true/false)'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: whatsapp-morning
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    env:
+      # Two-way bot (Cloudflare Worker) — takes over when WHATSAPP_BOT_URL is set
+      WHATSAPP_BOT_URL: ${{ secrets.WHATSAPP_BOT_URL }}
+      BROADCAST_SECRET: ${{ secrets.BROADCAST_SECRET }}
+      # One-way via Twilio, straight from Actions
+      TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+      FORCE: ${{ github.event.inputs.force || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check there is a new trading day to send
+        id: check
+        run: |
+          python - <<'EOF'
+          import json, os, datetime
+          d = json.load(open("output/bot.json"))["d"]
+          last = None
+          if os.path.exists("output/bot_sent.json"):
+              last = json.load(open("output/bot_sent.json")).get("d")
+          age = (datetime.date.today() - datetime.date.fromisoformat(d)).days
+          force = os.environ["FORCE"] == "true"
+          send = force or (d != last and age <= 4)
+          print(f"feed date {d}, last sent {last}, {age} day(s) old -> send={send}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"send={'true' if send else 'false'}\nd={d}\n")
+          EOF
+
+      - name: Send via two-way bot
+        id: twoway
+        if: ${{ steps.check.outputs.send == 'true' && env.WHATSAPP_BOT_URL != '' }}
+        run: |
+          Q=""; [ "$FORCE" = "true" ] && Q="?force=1"
+          curl -fsS --max-time 240 -X POST "$WHATSAPP_BOT_URL/broadcast$Q" \
+            -H "Authorization: Bearer $BROADCAST_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "{\"ref\":\"$(git rev-parse HEAD)\"}"
+
+      - name: Send via Twilio (one-way)
+        id: oneway
+        if: ${{ steps.check.outputs.send == 'true' && env.WHATSAPP_BOT_URL == '' && env.TWILIO_ACCOUNT_SID != '' }}
+        env:
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_WHATSAPP_FROM: ${{ secrets.TWILIO_WHATSAPP_FROM }}
+          TWILIO_CONTENT_SID: ${{ secrets.TWILIO_CONTENT_SID }}
+          WHATSAPP_RECIPIENTS: ${{ secrets.WHATSAPP_RECIPIENTS }}
+        run: python bot/send_whatsapp.py
+
+      - name: Remember the date sent
+        if: ${{ steps.twoway.outcome == 'success' || steps.oneway.outcome == 'success' }}
+        run: |
+          echo "{\"d\":\"${{ steps.check.outputs.d }}\",\"sent_at\":\"$(date -u +%FT%TZ)\"}" > output/bot_sent.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add output/bot_sent.json
+          git commit -m "WhatsApp update sent for ${{ steps.check.outputs.d }}"
+          for i in 1 2 3; do git pull --rebase origin main && git push && break; sleep 5; done

@@ -110,6 +110,7 @@ const card = await say(me, "reliance");
 if (PROVIDER === "twilio" && card[0].to !== "whatsapp:+919800000001") throw new Error("bad To " + card[0].to);
 if (PROVIDER === "twilio" && card[0].from !== "whatsapp:+14155238886") throw new Error("bad From " + card[0].from);
 await say(me, "tata motors");
+await say(me, "picks");
 await say(me, "watch tcs infy tmpv zzzzz");
 await say(me, "alert tcs above 1");
 await say(me, "what does a high RSI on INFY mean? should I buy?");

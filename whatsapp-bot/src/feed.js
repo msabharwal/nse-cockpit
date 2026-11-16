@@ -47,7 +47,17 @@ export function dateLabel(d) {
   });
 }
 
-export const FOOTER = "_Information only — not investment advice._";
+export const FOOTER = "_Model output for family use — not investment advice._";
+
+// Compact level: whole rupees above ₹100
+const lvl = (x) => inr(x >= 100 ? Math.round(x) : x);
+
+export function pickLines(picks = []) {
+  return picks.flatMap((k, i) => [
+    `${i + 1}. *${k.s}* ${inr(k.close)} · score ${k.score}`,
+    `   Entry ${lvl(k.entry[0])}–${lvl(k.entry[1])} · SL ${lvl(k.sl)} · Target ${lvl(k.tgt)}`,
+  ]);
+}
 
 function rowObj(r) {
   const [s, p, c, rsi, v, g, sl, a, w] = r;
@@ -89,6 +99,7 @@ export function digestText(feed, idx, { watch = [], notices = [] } = {}) {
   if (g.breadth) L.push(`Breadth: ${g.breadth.adv} up · ${g.breadth.dec} down · ${g.breadth.unch} flat`);
   L.push(`${g.above_sma10 ?? "–"} of ${feed.n} stocks above their 10-day average`);
   L.push(`RSI ≥ 70: ${g.overbought ?? "–"} stocks · RSI ≤ 30: ${g.oversold ?? "–"}`);
+  if (feed.picks?.length) L.push("", "*Cockpit picks* (score ≥ 65, levels from ATR)", ...pickLines(feed.picks));
 
   const section = (title, syms, fmt = stockLine) => {
     const rows = (syms || []).map((s) => idx.get(s)).filter(Boolean);
@@ -113,6 +124,10 @@ export function digestText(feed, idx, { watch = [], notices = [] } = {}) {
 export function summaryLine(feed, idx, { watch = [], alerts = 0, replyHint = true } = {}) {
   const g = feed.digest || {};
   const parts = [];
+  if (feed.picks?.length) {
+    parts.push("Picks: " + feed.picks.map((k) =>
+      `${k.s} (${k.score}) entry ${lvl(k.entry[0])}-${lvl(k.entry[1])} SL ${lvl(k.sl)} TGT ${lvl(k.tgt)}`).join("; "));
+  }
   if (g.breadth) parts.push(`Breadth ${g.breadth.adv} up / ${g.breadth.dec} down`);
   const short = (syms) => (syms || []).slice(0, 3).map((s) => idx.get(s)).filter((r) => r && r[2] != null)
     .map((r) => `${r[0]} ${pct(r[2])}`).join(", ");

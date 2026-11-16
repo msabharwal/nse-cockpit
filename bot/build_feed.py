@@ -36,6 +36,45 @@ MIN_VOL = 50_000
 TOP_N = 5
 
 
+# ── Cockpit picks (technical-only) ───────────────────────────────────────────
+# Follows the cockpit's rules: RSI 45–72, volume ≥ 1.5× average, price above the
+# 10-day SMA (not overextended), rising 100-day SMA, qualify at score ≥ 65.
+# Levels: entry zone = close ± 0.4×ATR, stop-loss 1.5×ATR, target 2.5×ATR.
+# Fundamentals are left out until real values replace the placeholders.
+PICKS_N = 8
+PICK_THRESHOLD = 65
+PICK_MIN_PRICE = 50.0
+PICK_MIN_VOL = 100_000
+FUND_WORDS = ("ETF", "BEES", "IETF", "LIQUID", "GOLD", "SILVER", "NIFTY", "SENSEX", "GSEC", "CASE", "INAV")
+
+
+def is_fund(sym):
+    return any(w in sym for w in FUND_WORDS)
+
+
+def score_pick(row):
+    s, p, c, rsi, v, g, sl, a, w = row
+    if None in (p, rsi, v, g, sl, a) or a <= 0:
+        return None
+    # hard gates
+    if not (45 <= rsi <= 72) or v < 1.5 or g <= 0 or g > 8 or sl <= 0 or not (0.8 <= a <= 6):
+        return None
+    trend = 30 * min(sl / 0.10, 1)                     # 100-day SMA slope, %/day
+    momentum = 20 * min(g / 3, 1)                      # % above 10-day SMA
+    rsi_pts = 25 * max(0.0, 1 - abs(rsi - 60) / 15)   # sweet spot around 60
+    volume = 25 * min((v - 1) / 1.5, 1)                # 1.5× → ~8 pts, 2.5×+ → 25
+    score = round(trend + momentum + rsi_pts + volume)
+    if score < PICK_THRESHOLD:
+        return None
+    atr = p * a / 100
+    return {
+        "s": s, "score": score, "close": r(p),
+        "entry": [r(p - 0.4 * atr), r(p + 0.4 * atr)],
+        "sl": r(p - 1.5 * atr), "tgt": r(p + 2.5 * atr),
+        "rsi": rsi, "v": v,
+    }
+
+
 def r(x, nd=2):
     # signals.json can contain NaN (not valid JSON for JavaScript) — map to null
     if x is None:
@@ -83,7 +122,7 @@ def main():
             if row[i_c] is not None and row[i_p]:
                 prev_px[row[i_s]] = row[i_p] / (1 + row[i_c] / 100)
 
-    rows, liquid = [], []
+    rows, liquid, candidates = [], [], []
     adv = dec = unch = 0
     for u in sig["universe"]:
         p = u.get("price") or 0
@@ -106,6 +145,10 @@ def main():
         rows.append(row)
         if p >= MIN_PRICE and (u.get("vol") or 0) >= MIN_VOL:
             liquid.append(row)
+        if p >= PICK_MIN_PRICE and (u.get("vol") or 0) >= PICK_MIN_VOL and not is_fund(u["symbol"]):
+            pk = score_pick(row)
+            if pk:
+                candidates.append(pk)
 
     with_chg = [x for x in liquid if x[2] is not None]
     digest = {
@@ -125,6 +168,7 @@ def main():
         "n": len(rows),
         "cols": COLS,
         "digest": digest,
+        "picks": sorted(candidates, key=lambda x: -x["score"])[:PICKS_N],
         "rows": sorted(rows, key=lambda x: x[0]),
     }
     FEED.write_text(json.dumps(feed, separators=(",", ":"), allow_nan=False))

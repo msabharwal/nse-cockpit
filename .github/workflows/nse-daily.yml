@@ -20,13 +20,6 @@ permissions:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    env:
-      # WhatsApp evening update — see whatsapp-bot/README.md
-      # Two-way bot (Cloudflare Worker): set WHATSAPP_BOT_URL + BROADCAST_SECRET
-      WHATSAPP_BOT_URL: ${{ secrets.WHATSAPP_BOT_URL }}
-      BROADCAST_SECRET: ${{ secrets.BROADCAST_SECRET }}
-      # One-way, straight from Actions via Twilio (used only while WHATSAPP_BOT_URL is unset)
-      TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,7 +45,7 @@ jobs:
             python nse_pipeline.py --exchange "$EXCHANGE"
           fi
 
-      - name: Build WhatsApp bot feed
+      - name: Build WhatsApp bot feed (sent next morning by whatsapp-morning.yml)
         run: python bot/build_feed.py
 
       - name: Commit signals and history
@@ -63,23 +56,3 @@ jobs:
           git diff --staged --quiet || git commit -m "Daily signals $(date -u +%Y-%m-%d) [eodhd]"
           git pull --rebase origin main
           git push
-
-      - name: Send WhatsApp evening update (two-way bot)
-        if: ${{ env.WHATSAPP_BOT_URL != '' }}
-        continue-on-error: true   # a WhatsApp problem must never fail the data pipeline
-        run: |
-          # Pin the bot to this exact commit so it never reads a cached older feed
-          curl -fsS --max-time 240 -X POST "$WHATSAPP_BOT_URL/broadcast" \
-            -H "Authorization: Bearer $BROADCAST_SECRET" \
-            -H "Content-Type: application/json" \
-            -d "{\"ref\":\"$(git rev-parse HEAD)\"}"
-
-      - name: Send WhatsApp evening update (one-way via Twilio)
-        if: ${{ env.WHATSAPP_BOT_URL == '' && env.TWILIO_ACCOUNT_SID != '' }}
-        continue-on-error: true
-        env:
-          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
-          TWILIO_WHATSAPP_FROM: ${{ secrets.TWILIO_WHATSAPP_FROM }}
-          TWILIO_CONTENT_SID: ${{ secrets.TWILIO_CONTENT_SID }}
-          WHATSAPP_RECIPIENTS: ${{ secrets.WHATSAPP_RECIPIENTS }}
-        run: python bot/send_whatsapp.py

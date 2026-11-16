@@ -6,7 +6,7 @@
 //   GET  /           health check
 
 import {
-  getFeed, normSymbol, suggest, stockCard, digestText, stockLine, dateLabel, summaryLine,
+  getFeed, normSymbol, suggest, stockCard, digestText, stockLine, dateLabel, summaryLine, pickLines,
   alertLabel, alertFired, alertNotice, FOOTER,
 } from "./feed.js";
 import { sendText, sendTemplate, hasTemplate, markRead, verifyMeta, verifyTwilio } from "./whatsapp.js";
@@ -134,6 +134,7 @@ const HELP = [
   "*NSE Cockpit* — end-of-day NSE data on WhatsApp",
   "",
   "*TODAY* — today's market update",
+  "*PICKS* — today's cockpit picks with levels",
   "*RELIANCE* — any NSE symbol for its details",
   "*WATCH TCS INFY* — add to your watchlist",
   "*UNWATCH TCS* — remove from watchlist",
@@ -178,6 +179,11 @@ async function route(env, phone, text) {
     const notices = user?.pending ? JSON.parse(user.pending) : [];
     if (notices.length) await env.DB.prepare("UPDATE users SET pending = NULL WHERE phone = ?").bind(phone).run();
     return digestText(feed, idx, { watch: await watchlistOf(env, phone), notices });
+  }
+
+  if (U === "PICKS" || U === "PICK") {
+    if (!feed.picks?.length) return `No stocks met the cockpit's score threshold on ${dateLabel(feed.d)}.`;
+    return [`*Cockpit picks · ${dateLabel(feed.d)} close*`, "(score ≥ 65, levels from ATR)", "", ...pickLines(feed.picks), "", FOOTER].join("\n");
   }
 
   if ((cmd === "WATCH" || cmd === "ADD") && args.length) {
