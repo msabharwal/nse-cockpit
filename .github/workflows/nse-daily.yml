@@ -8,7 +8,7 @@ on:
       exchange:
         description: 'Exchange(s) to run — comma-separated (e.g. NSE,BSE)'
         required: false
-        default: 'NSE,BSE'
+        default: 'NSE'
       init:
         description: 'Backfill 1 year of history? (true/false)'
         required: false
@@ -35,7 +35,7 @@ jobs:
         env:
           EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
         run: |
-          EXCHANGE="${{ github.event.inputs.exchange || 'NSE,BSE' }}"
+          EXCHANGE="${{ github.event.inputs.exchange || 'NSE' }}"
           INIT="${{ github.event.inputs.init || 'false' }}"
           if [ "$INIT" = "true" ] || [ ! -f output/signals.json ]; then
             echo "Running in INIT mode (backfilling 1 year)…"
