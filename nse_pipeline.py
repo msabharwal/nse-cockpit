@@ -199,6 +199,25 @@ class CacheManager:
         df.to_csv(path, index=False)
         log.info(f"Cached {len(df)} rows → {path.name}")
 
+    def merge_save(self, exchange: str, dt: date, df_new: pd.DataFrame):
+        """Append new symbols to an existing cache CSV, deduplicating on 'symbol'."""
+        if df_new.empty:
+            return
+        path = self.cache_path(exchange, dt)
+        if path.exists():
+            df_existing = pd.read_csv(path)
+            existing_syms = set(df_existing["symbol"].str.upper().tolist())
+            df_add = df_new[~df_new["symbol"].str.upper().isin(existing_syms)]
+            if df_add.empty:
+                return
+            df_merged = pd.concat([df_existing, df_add], ignore_index=True)
+            df_merged.to_csv(path, index=False)
+            log.info(f"Merged +{len(df_add)} symbols into {path.name} "
+                     f"(total {len(df_merged)})")
+        else:
+            df_new.to_csv(path, index=False)
+            log.info(f"Cached {len(df_new)} rows → {path.name}")
+
     def load(self, exchange: str, dt: date) -> pd.DataFrame:
         path = self.cache_path(exchange, dt)
         if not path.exists():
@@ -691,7 +710,8 @@ def get_trading_dates(start: date, end: date) -> list[date]:
 
 def yfinance_backfill(exchange: str, cache: "CacheManager",
                       start: date, end: date,
-                      symbol_list: list[str] = None) -> int:
+                      symbol_list: list[str] = None,
+                      merge: bool = False) -> int:
     """
     Download 1 year of daily OHLCV for all NSE-listed symbols via yfinance
     (.NS suffix) and write them into the EODHD cache CSV format so the rest
@@ -837,7 +857,7 @@ def yfinance_backfill(exchange: str, cache: "CacheManager",
     files_written = 0
 
     for snap_date in all_dates_sorted:
-        if cache.exists(exchange, snap_date):
+        if cache.exists(exchange, snap_date) and not merge:
             continue  # already cached (e.g. from EODHD daily run)
 
         rows = []
@@ -867,7 +887,10 @@ def yfinance_backfill(exchange: str, cache: "CacheManager",
 
         if rows:
             df_day = pd.DataFrame(rows)
-            cache.save(exchange, snap_date, df_day)
+            if merge:
+                cache.merge_save(exchange, snap_date, df_day)
+            else:
+                cache.save(exchange, snap_date, df_day)
             files_written += 1
 
     log.info(f"✓ yfinance backfill complete: {files_written} day-CSVs written "
@@ -961,7 +984,7 @@ def run_pipeline(init_mode: bool = False, exchanges: list[str] = None):
                 log.info(f"Symbols in full universe but not in EODHD cache: {len(missing_syms)}")
                 if missing_syms:
                     yfinance_backfill(exchange, cache, start, today,
-                                      symbol_list=missing_syms)
+                                      symbol_list=missing_syms, merge=True)
             else:
                 log.warning("Could not fetch any NSE index CSVs — skipping yfinance top-up")
 
