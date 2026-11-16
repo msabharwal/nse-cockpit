@@ -719,28 +719,51 @@ def yfinance_backfill(exchange: str, cache: "CacheManager",
     else:
         # Fallback: use Nifty 500 as the base universe if we have no symbol list
         # (a full NSE download would be 2000+ tickers and take hours)
-        log.info("No symbol list provided — fetching Nifty 500 index constituents via yfinance")
+        log.info("No symbol list provided — assembling full NSE universe from multiple index CSVs")
         try:
             idx = yf.download("^CRSLDX", period="5d", progress=False)  # just to warm up
         except Exception:
             pass
-        # Download Nifty 500 as a broad but manageable universe
-        nifty500_url = (
-            "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
-        )
-        try:
-            resp = requests.get(nifty500_url, timeout=30)
-            resp.raise_for_status()
-            from io import StringIO
-            df_idx = pd.read_csv(StringIO(resp.text))
-            # Column name is usually "Symbol"
-            sym_col = [c for c in df_idx.columns if c.strip().lower() == "symbol"]
-            if sym_col:
-                symbol_list = df_idx[sym_col[0]].str.strip().tolist()
-            else:
-                symbol_list = df_idx.iloc[:, 0].str.strip().tolist()
-        except Exception as e:
-            log.warning(f"Could not fetch Nifty 500 list: {e} — using hardcoded 50-stock fallback")
+        # Download full NSE universe by combining multiple broad index CSVs.
+        # Each CSV covers a different market-cap band; together they reach
+        # ~1,800+ actively-traded NSE stocks without hitting the full 2000+
+        # symbol yfinance throttle.  Nifty 500 is included as the anchor so
+        # we always have a minimal universe even if the other URLs fail.
+        nse_index_urls = [
+            # Broad / flagship indices (high overlap, deduped below)
+            "https://archives.nseindia.com/content/indices/ind_nifty500list.csv",
+            "https://archives.nseindia.com/content/indices/ind_niftytotalmarket_list.csv",
+            # Mid & small cap bands
+            "https://archives.nseindia.com/content/indices/ind_niftymidcap150list.csv",
+            "https://archives.nseindia.com/content/indices/ind_niftysmallcap250list.csv",
+            "https://archives.nseindia.com/content/indices/ind_niftymicrocap250_list.csv",
+            # Additional broad coverage
+            "https://archives.nseindia.com/content/indices/ind_niftylargemidcap250list.csv",
+            "https://archives.nseindia.com/content/indices/ind_niftymidsmallcap400list.csv",
+        ]
+        collected: set[str] = set()
+        from io import StringIO
+        for url in nse_index_urls:
+            try:
+                resp = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+                resp.raise_for_status()
+                df_idx = pd.read_csv(StringIO(resp.text))
+                sym_col = [c for c in df_idx.columns if c.strip().lower() == "symbol"]
+                if sym_col:
+                    syms = df_idx[sym_col[0]].str.strip().dropna().tolist()
+                else:
+                    syms = df_idx.iloc[:, 0].str.strip().dropna().tolist()
+                before = len(collected)
+                collected.update(s for s in syms if s and not s.startswith("#"))
+                log.info(f"  {url.split('/')[-1]}: +{len(collected)-before} new symbols "
+                         f"(total {len(collected)})")
+            except Exception as e:
+                log.warning(f"Could not fetch {url.split('/')[-1]}: {e}")
+        if collected:
+            symbol_list = sorted(collected)
+            log.info(f"Full NSE universe assembled: {len(symbol_list)} unique symbols")
+        else:
+            log.warning("All NSE index URLs failed — using hardcoded 50-stock fallback")
             symbol_list = [
                 "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
                 "HINDUNILVR", "SBIN", "HDFC", "BHARTIARTL", "KOTAKBANK",
