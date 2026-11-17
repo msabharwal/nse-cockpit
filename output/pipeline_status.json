@@ -1,12 +1,12 @@
 {
-  "last_run": "2026-11-17T01:33:43.859952",
+  "last_run": "2026-11-17T02:31:03.672120",
   "trading_date": "2026-11-16",
   "stock_count": 498,
   "exchanges": [
     "NSE"
   ],
   "cache_days": {
-    "NSE": 247
+    "NSE": 248
   },
   "data_source": "eodhd.com"
 }
