@@ -60,7 +60,10 @@ jobs:
           path: data/eodhd_cache
           key: eodhd-cache-${{ runner.os }}-${{ hashFiles('nse_pipeline.py') }}
 
-      - name: Commit signals and history
+      - name: Enrich — fetch news & fundamentals for top picks
+        run: python nse_enrich.py
+
+      - name: Commit signals, history, news and fundamentals
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
