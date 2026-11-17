@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-16T23:05:39.503068",
+  "generated_at": "2026-11-17T01:33:43.852266",
   "trading_date": "2026-11-16",
-  "stock_count": 497,
+  "stock_count": 498,
   "universe": [
     {
       "symbol": "360ONE",
@@ -2977,6 +2977,26 @@
       "sma10gap": 5.2846,
       "sma100slope": 0.030293,
       "week52pos": 32.82,
+      "pe": 20.0,
+      "pe_threshold": 28,
+      "roe": 12.0,
+      "de": 0.5,
+      "revg": 5.0
+    },
+    {
+      "symbol": "EMBASSY",
+      "name": "EMBASSY",
+      "sector": "Technology",
+      "exchange": "NSE",
+      "price": 420.0,
+      "vol": 400044,
+      "vol_ratio": 0.7173,
+      "cap": -1,
+      "rsi": 51.33,
+      "atr_pct": 1.4242,
+      "sma10gap": 0.8069,
+      "sma100slope": 0.016239,
+      "week52pos": 51.36,
       "pe": 20.0,
       "pe_threshold": 28,
       "roe": 12.0,
