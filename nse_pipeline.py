@@ -1054,6 +1054,8 @@ def run_pipeline(init_mode: bool = False, exchanges: list[str] = None):
         all_symbols  = latest_df["symbol"].str.upper().unique().tolist()
         log.info(f"{exchange}: {len(all_symbols)} symbols from {latest_date}")
 
+        _thin_history_syms: list[str] = []  # symbols skipped for < 15 days history
+
         for i, symbol in enumerate(all_symbols):
             if i % 500 == 0:
                 log.info(f"  {i}/{len(all_symbols)} symbols…")
@@ -1064,6 +1066,7 @@ def run_pipeline(init_mode: bool = False, exchanges: list[str] = None):
             volumes = cache.load_history(exchange, symbol, "volume", HISTORY_DAYS)
 
             if len(closes) < 15:
+                _thin_history_syms.append(symbol)
                 continue
 
             idx     = closes.index
@@ -1090,6 +1093,85 @@ def run_pipeline(init_mode: bool = False, exchanges: list[str] = None):
                     if day_open > 0:
                         ind["day_chg_pct"] = round((day_close - day_open) / day_open * 100, 2)
             all_indicators[symbol] = ind
+
+        # ── 2b. Thin-history backfill ─────────────────────────────────────
+        # Symbols that were skipped above (< 15 days in cache) get a 30-day
+        # historical_eod fetch, merged into cache, then re-scored.
+        if _thin_history_syms:
+            log.info(f"Thin-history backfill: {len(_thin_history_syms)} symbols skipped — fetching 30d history via EODHD…")
+            _thin_hist_start = today - timedelta(days=30)
+            _thin_rows_by_date: dict[date, list[dict]] = {}
+            _thin_fetched = 0
+            _thin_skipped = 0
+            for _sym in _thin_history_syms:
+                try:
+                    _recs = client.historical_eod(_sym, exchange, _thin_hist_start, today)
+                    if not _recs:
+                        _thin_skipped += 1
+                        continue
+                    for _r in _recs:
+                        try:
+                            _dt = date.fromisoformat(_r["date"])
+                        except (KeyError, ValueError):
+                            continue
+                        _close  = float(_r.get("adjusted_close") or _r.get("close") or 0)
+                        _volume = float(_r.get("volume") or 0)
+                        if _close < MIN_PRICE or _volume < MIN_VOLUME:
+                            continue
+                        _thin_rows_by_date.setdefault(_dt, []).append({
+                            "symbol":    _sym,
+                            "open":      float(_r.get("open")  or _close),
+                            "high":      float(_r.get("high")  or _close),
+                            "low":       float(_r.get("low")   or _close),
+                            "close":     _close,
+                            "volume":    int(_volume),
+                            "mktcap_cr": round(float(_r.get("market_capitalization") or 0) / 1e7, 2),
+                        })
+                    _thin_fetched += 1
+                    time.sleep(0.05)
+                except Exception as _e:
+                    log.debug(f"  thin-history {_sym}: {_e}")
+                    _thin_skipped += 1
+            _thin_merged = 0
+            for _dt, _rows in _thin_rows_by_date.items():
+                if _rows:
+                    _df_thin = pd.DataFrame(_rows)
+                    cache.merge_save(exchange, _dt, _df_thin)
+                    _thin_merged += 1
+            log.info(f"✓ Thin-history backfill: fetched {_thin_fetched} symbols "
+                     f"({_thin_skipped} skipped), merged into {_thin_merged} date-CSVs")
+
+            # Re-score the newly backfilled symbols
+            _rescored = 0
+            for symbol in _thin_history_syms:
+                closes  = cache.load_history(exchange, symbol, "close",  HISTORY_DAYS)
+                highs   = cache.load_history(exchange, symbol, "high",   HISTORY_DAYS)
+                lows    = cache.load_history(exchange, symbol, "low",    HISTORY_DAYS)
+                volumes = cache.load_history(exchange, symbol, "volume", HISTORY_DAYS)
+                if len(closes) < 15:
+                    continue
+                idx     = closes.index
+                highs   = highs.reindex(idx).fillna(closes)
+                lows    = lows.reindex(idx).fillna(closes)
+                volumes = volumes.reindex(idx).fillna(0)
+                ind = compute_indicators(symbol, highs, lows, closes, volumes)
+                ind["exchange"] = exchange
+                row = latest_df[latest_df["symbol"].str.upper() == symbol]
+                if not row.empty:
+                    if "mktcap_cr" in row.columns:
+                        cap = row["mktcap_cr"].values[0]
+                        if cap > 0:
+                            if symbol not in fund:
+                                fund[symbol] = {}
+                            fund[symbol]["cap"] = round(float(cap), 2)
+                    if "open" in row.columns and "close" in row.columns:
+                        day_open  = float(row["open"].values[0])
+                        day_close = float(row["close"].values[0])
+                        if day_open > 0:
+                            ind["day_chg_pct"] = round((day_close - day_open) / day_open * 100, 2)
+                all_indicators[symbol] = ind
+                _rescored += 1
+            log.info(f"✓ Re-scored {_rescored} thin-history symbols (universe now {len(all_indicators)})")
 
         # ── 3. Merge new symbols into fundamentals ───────────────────────
         new_syms = [s for s in all_indicators if s not in fund]
