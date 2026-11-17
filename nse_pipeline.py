@@ -737,53 +737,23 @@ def yfinance_backfill(exchange: str, cache: "CacheManager",
     if symbol_list:
         tickers = [f"{s}.NS" for s in symbol_list]
     else:
-        # Fallback: use Nifty 500 as the base universe if we have no symbol list
-        # (a full NSE download would be 2000+ tickers and take hours)
-        log.info("No symbol list provided — assembling full NSE universe from multiple index CSVs")
-        try:
-            idx = yf.download("^CRSLDX", period="5d", progress=False)  # just to warm up
-        except Exception:
-            pass
-        # Download full NSE universe by combining multiple broad index CSVs.
-        # Each CSV covers a different market-cap band; together they reach
-        # ~1,800+ actively-traded NSE stocks without hitting the full 2000+
-        # symbol yfinance throttle.  Nifty 500 is included as the anchor so
-        # we always have a minimal universe even if the other URLs fail.
-        nse_index_urls = [
-            # Broad / flagship indices (high overlap, deduped below)
-            "https://archives.nseindia.com/content/indices/ind_nifty500list.csv",
-            "https://archives.nseindia.com/content/indices/ind_niftytotalmarket_list.csv",
-            # Mid & small cap bands
-            "https://archives.nseindia.com/content/indices/ind_niftymidcap150list.csv",
-            "https://archives.nseindia.com/content/indices/ind_niftysmallcap250list.csv",
-            "https://archives.nseindia.com/content/indices/ind_niftymicrocap250_list.csv",
-            # Additional broad coverage
-            "https://archives.nseindia.com/content/indices/ind_niftylargemidcap250list.csv",
-            "https://archives.nseindia.com/content/indices/ind_niftymidsmallcap400list.csv",
-        ]
-        collected: set[str] = set()
-        from io import StringIO
-        for url in nse_index_urls:
-            try:
-                resp = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
-                resp.raise_for_status()
-                df_idx = pd.read_csv(StringIO(resp.text))
-                sym_col = [c for c in df_idx.columns if c.strip().lower() == "symbol"]
-                if sym_col:
-                    syms = df_idx[sym_col[0]].str.strip().dropna().tolist()
-                else:
-                    syms = df_idx.iloc[:, 0].str.strip().dropna().tolist()
-                before = len(collected)
-                collected.update(s for s in syms if s and not s.startswith("#"))
-                log.info(f"  {url.split('/')[-1]}: +{len(collected)-before} new symbols "
-                         f"(total {len(collected)})")
-            except Exception as e:
-                log.warning(f"Could not fetch {url.split('/')[-1]}: {e}")
-        if collected:
-            symbol_list = sorted(collected)
-            log.info(f"Full NSE universe assembled: {len(symbol_list)} unique symbols")
+        # No symbol list provided — read from committed static file first,
+        # then fall back to hardcoded Nifty 50 emergency list.
+        # (NSE archive URLs are blocked from GitHub Actions; EODHD exchange-
+        #  symbol-list is handled in run_pipeline before yfinance is called.)
+        log.info("No symbol list provided — reading from nse_symbols.txt")
+        _static_path = Path(__file__).parent / "nse_symbols.txt"
+        if _static_path.exists():
+            _static_syms = []
+            with open(_static_path) as _f:
+                for _line in _f:
+                    _s = _line.strip().upper()
+                    if _s and not _s.startswith("#"):
+                        _static_syms.append(_s)
+            symbol_list = _static_syms
+            log.info(f"nse_symbols.txt: {len(symbol_list)} symbols")
         else:
-            log.warning("All NSE index URLs failed — using hardcoded 50-stock fallback")
+            log.warning("nse_symbols.txt not found — using emergency Nifty 50 fallback")
             symbol_list = [
                 "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
                 "HINDUNILVR", "SBIN", "HDFC", "BHARTIARTL", "KOTAKBANK",
@@ -938,55 +908,123 @@ def run_pipeline(init_mode: bool = False, exchanges: list[str] = None):
             except Exception as e:
                 log.warning(f"Bulk EOD failed {exchange} {dt}: {e}")
 
-        # ── 1b. yfinance top-up for NSE full market universe ──────────────────
-        # EODHD bulk-EOD only returns the stocks on its plan (typically Nifty 500).
-        # We always augment with yfinance for the remaining NSE universe so the
-        # dashboard shows the full market (~1800+ stocks), not just Nifty 500.
-        # Strategy:
-        #   • Fetch the full NSE symbol list from multiple NSE index CSVs.
-        #   • Identify symbols NOT already in the EODHD cache for today.
-        #   • Fetch those missing symbols via yfinance and merge into cache.
+        # ── 1b. Top-up: fetch ALL NSE symbols missing from bulk-EOD cache ────────
+        # Strategy (priority order):
+        #   1. EODHD exchange-symbol-list/NSE  → all ~2900 NSE equities (same API key,
+        #      no extra cost, works from GitHub Actions)
+        #   2. Static nse_symbols.txt committed in this repo (2645 symbols, offline)
+        #
+        # For each symbol NOT yet in the EODHD bulk cache, we fetch individual
+        # historical EOD from EODHD (historical_eod endpoint) and merge into cache.
+        # This ensures the full NSE market is covered, not just the ~500 that
+        # appear in the bulk-last-day response on some plans.
         if exchange == "NSE":
-            # --- build full NSE universe from index CSVs ---
-            nse_index_urls = [
-                "https://archives.nseindia.com/content/indices/ind_nifty500list.csv",
-                "https://archives.nseindia.com/content/indices/ind_niftytotalmarket_list.csv",
-                "https://archives.nseindia.com/content/indices/ind_niftymidcap150list.csv",
-                "https://archives.nseindia.com/content/indices/ind_niftysmallcap250list.csv",
-                "https://archives.nseindia.com/content/indices/ind_niftymicrocap250_list.csv",
-                "https://archives.nseindia.com/content/indices/ind_niftylargemidcap250list.csv",
-                "https://archives.nseindia.com/content/indices/ind_niftymidsmallcap400list.csv",
-            ]
+            # --- Step 1: build full NSE symbol universe ---
             full_nse_symbols: set[str] = set()
-            from io import StringIO as _SIO
-            for _url in nse_index_urls:
-                try:
-                    _resp = requests.get(_url, timeout=30,
-                                         headers={"User-Agent": "Mozilla/5.0"})
-                    _resp.raise_for_status()
-                    _df = pd.read_csv(_SIO(_resp.text))
-                    _col = [c for c in _df.columns if c.strip().lower() == "symbol"]
-                    _syms = (_df[_col[0]] if _col else _df.iloc[:, 0]).str.strip().dropna()
-                    full_nse_symbols.update(s for s in _syms if s and not s.startswith("#"))
-                    log.info(f"  {_url.split('/')[-1]}: total unique so far = {len(full_nse_symbols)}")
-                except Exception as _e:
-                    log.warning(f"  Could not fetch {_url.split('/')[-1]}: {_e}")
 
+            # 1a. Try EODHD exchange-symbol-list (best source, same API key)
+            try:
+                log.info("Fetching full NSE symbol list from EODHD exchange-symbol-list…")
+                _all_sym_records = client.exchange_symbols(exchange)
+                for _rec in _all_sym_records:
+                    _code = str(_rec.get("Code", "")).strip().upper()
+                    _typ  = str(_rec.get("Type", "")).lower()
+                    # Keep only common stock / equity, skip ETF, funds, bonds
+                    if _code and _typ in ("common stock", "equity", ""):
+                        full_nse_symbols.add(_code)
+                log.info(f"EODHD exchange-symbol-list: {len(full_nse_symbols)} NSE equities")
+            except Exception as _e:
+                log.warning(f"Could not fetch EODHD exchange-symbol-list: {_e}")
+
+            # 1b. Fall back to committed static file if EODHD listing failed or returned <100
+            if len(full_nse_symbols) < 100:
+                _static_path = Path(__file__).parent / "nse_symbols.txt"
+                if _static_path.exists():
+                    _static_syms = set()
+                    with open(_static_path) as _f:
+                        for _line in _f:
+                            _s = _line.strip().upper()
+                            if _s and not _s.startswith("#"):
+                                _static_syms.add(_s)
+                    full_nse_symbols.update(_static_syms)
+                    log.info(f"Static nse_symbols.txt: {len(_static_syms)} symbols "
+                             f"(total universe: {len(full_nse_symbols)})")
+                else:
+                    log.warning("nse_symbols.txt not found — only EODHD bulk-EOD symbols will be used")
+
+            # --- Step 2: identify missing symbols and fetch via EODHD historical_eod ---
             if full_nse_symbols:
-                log.info(f"Full NSE index universe: {len(full_nse_symbols)} symbols")
-                # Find symbols missing from EODHD cache
+                log.info(f"Full NSE universe: {len(full_nse_symbols)} symbols")
                 cached_dates = cache.available_dates(exchange)
                 cached_syms: set[str] = set()
                 if cached_dates:
-                    _latest = cache.load(exchange, cached_dates[-1])
-                    cached_syms = set(_latest["symbol"].str.upper().tolist())
+                    _latest_df = cache.load(exchange, cached_dates[-1])
+                    cached_syms = set(_latest_df["symbol"].str.upper().tolist())
                 missing_syms = sorted(full_nse_symbols - cached_syms)
-                log.info(f"Symbols in full universe but not in EODHD cache: {len(missing_syms)}")
+                log.info(f"Symbols not in EODHD bulk cache: {len(missing_syms)} "
+                         f"(cached: {len(cached_syms)})")
+
                 if missing_syms:
-                    yfinance_backfill(exchange, cache, start, today,
-                                      symbol_list=missing_syms, merge=True)
+                    # Fetch missing symbols one-by-one via EODHD historical_eod
+                    # and merge into the existing cache CSVs
+                    log.info(f"Fetching {len(missing_syms)} missing symbols via EODHD historical_eod…")
+                    _hist_rows_by_date: dict[date, list[dict]] = {}
+                    _fetched = 0
+                    _skipped = 0
+                    for _sym in missing_syms:
+                        try:
+                            _recs = client.historical_eod(_sym, exchange, start, today)
+                            if not _recs:
+                                _skipped += 1
+                                continue
+                            for _r in _recs:
+                                try:
+                                    _dt = date.fromisoformat(_r["date"])
+                                except (KeyError, ValueError):
+                                    continue
+                                _close  = float(_r.get("adjusted_close") or _r.get("close") or 0)
+                                _volume = float(_r.get("volume") or 0)
+                                if _close < MIN_PRICE or _volume < MIN_VOLUME:
+                                    continue
+                                _hist_rows_by_date.setdefault(_dt, []).append({
+                                    "symbol":    _sym,
+                                    "open":      float(_r.get("open")  or _close),
+                                    "high":      float(_r.get("high")  or _close),
+                                    "low":       float(_r.get("low")   or _close),
+                                    "close":     _close,
+                                    "volume":    int(_volume),
+                                    "mktcap_cr": round(float(_r.get("market_capitalization") or 0) / 1e7, 2),
+                                })
+                            _fetched += 1
+                            time.sleep(0.05)   # be polite — 20 req/s max
+                        except Exception as _e:
+                            log.debug(f"  historical_eod {_sym}: {_e}")
+                            _skipped += 1
+
+                    # Merge fetched data into cache
+                    _merged_dates = 0
+                    for _dt, _rows in _hist_rows_by_date.items():
+                        if _rows:
+                            _df_new = pd.DataFrame(_rows)
+                            cache.merge_save(exchange, _dt, _df_new)
+                            _merged_dates += 1
+                    log.info(f"✓ EODHD top-up: fetched {_fetched} symbols "
+                             f"({_skipped} empty/failed), merged into {_merged_dates} date-CSVs")
+
+                    # yfinance fallback: for any STILL-missing symbols (not on EODHD plan),
+                    # attempt a free yfinance fetch
+                    _still_cached = set()
+                    _refresh_dates = cache.available_dates(exchange)
+                    if _refresh_dates:
+                        _still_cached = set(cache.load(exchange, _refresh_dates[-1])["symbol"].str.upper())
+                    _still_missing = sorted(full_nse_symbols - _still_cached)
+                    if _still_missing:
+                        log.info(f"Remaining {len(_still_missing)} symbols not in EODHD — "
+                                 f"attempting yfinance fallback…")
+                        yfinance_backfill(exchange, cache, start, today,
+                                          symbol_list=_still_missing, merge=True)
             else:
-                log.warning("Could not fetch any NSE index CSVs — skipping yfinance top-up")
+                log.warning("Could not build NSE universe — only EODHD bulk-EOD symbols will be used")
 
             # Also fall back fully if init mode produced nothing
             if init_mode:
