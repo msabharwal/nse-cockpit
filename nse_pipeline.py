@@ -971,9 +971,12 @@ def run_pipeline(init_mode: bool = False, exchanges: list[str] = None):
                     _hist_rows_by_date: dict[date, list[dict]] = {}
                     _fetched = 0
                     _skipped = 0
+                    # New symbols need enough history to clear the len(closes) < 15 guard.
+                    # Use at least 30 calendar days (≈ 20 trading days) regardless of mode.
+                    _hist_start = min(start, today - timedelta(days=30))
                     for _sym in missing_syms:
                         try:
-                            _recs = client.historical_eod(_sym, exchange, start, today)
+                            _recs = client.historical_eod(_sym, exchange, _hist_start, today)
                             if not _recs:
                                 _skipped += 1
                                 continue
