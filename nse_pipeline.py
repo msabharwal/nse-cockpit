@@ -618,6 +618,7 @@ def build_signals_json(exchanges_active: list[str],
             "sma10gap":    ind.get("sma10gap", 0),
             "sma100slope": ind.get("sma100slope", 0),
             "week52pos":   ind.get("week52pos", 50),
+            "day_chg_pct": ind.get("day_chg_pct", 0.0),
             "pe":          fund.get("pe", 18),
             "pe_threshold":PE_THRESHOLD.get(sector, 25),
             "roe":         fund.get("roe", 12),
@@ -679,6 +680,7 @@ def write_history_snapshot(signals: dict, trading_date: date):
             "a":  round(r["atr_pct"], 4),
             "x":  r["sector"],
             "e":  r.get("exchange", "NSE"),
+            "c":  round(r.get("day_chg_pct", 0.0), 2),  # day change % (close vs open)
         }
         for r in signals["universe"]
         if None not in (r["rsi"], r["vol_ratio"], r["sma10gap"])
@@ -1071,15 +1073,22 @@ def run_pipeline(init_mode: bool = False, exchanges: list[str] = None):
 
             ind = compute_indicators(symbol, highs, lows, closes, volumes)
             ind["exchange"] = exchange
-            # Use mktcap from latest day if available
+            # Use mktcap and open from latest day if available
             row = latest_df[latest_df["symbol"].str.upper() == symbol]
-            if not row.empty and "mktcap_cr" in row.columns:
-                cap = row["mktcap_cr"].values[0]
-                if cap > 0:
-                    # Merge into fundamentals
-                    if symbol not in fund:
-                        fund[symbol] = {}
-                    fund[symbol]["cap"] = round(float(cap), 2)
+            if not row.empty:
+                if "mktcap_cr" in row.columns:
+                    cap = row["mktcap_cr"].values[0]
+                    if cap > 0:
+                        # Merge into fundamentals
+                        if symbol not in fund:
+                            fund[symbol] = {}
+                        fund[symbol]["cap"] = round(float(cap), 2)
+                # Day change % = (close - open) / open * 100
+                if "open" in row.columns and "close" in row.columns:
+                    day_open  = float(row["open"].values[0])
+                    day_close = float(row["close"].values[0])
+                    if day_open > 0:
+                        ind["day_chg_pct"] = round((day_close - day_open) / day_open * 100, 2)
             all_indicators[symbol] = ind
 
         # ── 3. Merge new symbols into fundamentals ───────────────────────
