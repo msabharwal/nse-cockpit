@@ -1014,17 +1014,31 @@ const CAT_CSS = {
 /* ══════════════════════════════════════════════════════════
    API
 ══════════════════════════════════════════════════════════ */
+// Format today's date as YYYY-MM-DD in IST
+function todayIST() {
+  const d = new Date(new Date().toLocaleString('en-US', {timeZone:'Asia/Kolkata'}));
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
 async function fetchStocks(symbols) {
   const sym = symbols.join(',');
-  const directUrl = `${API_ORIGIN}?symbols=${encodeURIComponent(sym)}&date=&periods=${PERIODS}&columns=${COLUMNS}`;
+  const date = todayIST();
+  const directUrl = `${API_ORIGIN}?symbols=${encodeURIComponent(sym)}&date=${date}&periods=${PERIODS}&columns=${COLUMNS}`;
 
-  // Try direct first
+  // Try direct first; filter response to only requested symbols
+  async function extractData(json) {
+    if (json.result !== 'success') throw new Error(json.error?.message || 'API error');
+    const requested = new Set(symbols);
+    // API may return more than requested — keep only what we asked for
+    const filtered = (json.data || []).filter(r => requested.has(r.symbol));
+    console.log(`[fetch] requested ${symbols.length}, got ${json.data?.length}, kept ${filtered.length}, date=${date}, first=${filtered[0]?.symbol}`);
+    return filtered.length ? filtered : (json.data || []);
+  }
+
   try {
     const res = await fetch(directUrl);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-    if (json.result !== 'success') throw new Error(json.error?.message || 'API error');
-    return json.data;
+    return await extractData(await res.json());
   } catch(e) {
     console.warn('[direct failed]', e.message, '— trying allorigins proxy');
   }
@@ -1035,22 +1049,15 @@ async function fetchStocks(symbols) {
     const res = await fetch(proxyUrl);
     if (!res.ok) throw new Error(`allorigins HTTP ${res.status}`);
     const wrapper = await res.json();
-    const json = JSON.parse(wrapper.contents);
-    console.log('[allorigins] result:', json.result, 'rows:', json.data?.length, 'first sym:', json.data?.[0]?.symbol);
-    if (json.result !== 'success') throw new Error(json.error?.message || 'API error');
-    return json.data;
+    return await extractData(JSON.parse(wrapper.contents));
   } catch(e) {
     console.warn('[allorigins failed]', e.message, '— trying thingproxy');
   }
 
   // Last resort: thingproxy
-  const proxyUrl2 = `https://thingproxy.freeboard.io/fetch/${encodeURIComponent(directUrl)}`;
-  const res2 = await fetch(proxyUrl2);
+  const res2 = await fetch(`https://thingproxy.freeboard.io/fetch/${encodeURIComponent(directUrl)}`);
   if (!res2.ok) throw new Error(`thingproxy HTTP ${res2.status}`);
-  const json2 = await res2.json();
-  console.log('[thingproxy] result:', json2.result, 'rows:', json2.data?.length, 'first sym:', json2.data?.[0]?.symbol);
-  if (json2.result !== 'success') throw new Error(json2.error?.message || 'API error');
-  return json2.data;
+  return await extractData(await res2.json());
 }
 
 function parseStock(raw) {
@@ -1119,48 +1126,67 @@ function parseStock(raw) {
 /* ══════════════════════════════════════════════════════════
    LOAD PIPELINE
 ══════════════════════════════════════════════════════════ */
-const BATCH = 10; // symbols per API call — API caps response at ~60, so keep batches small
-
 async function loadAll() {
   setLoading(true);
   stockData = {};
-  const batches = [];
-  for (let i = 0; i < NSE_UNIVERSE.length; i += BATCH) {
-    batches.push(NSE_UNIVERSE.slice(i, i + BATCH));
-  }
 
-  let done = 0;
-  for (const batch of batches) {
-    try {
-      const rows = await fetchStocks(batch);
-      if (!Array.isArray(rows)) { console.warn('Unexpected API shape:', rows); }
-      else for (const row of rows) {
-        const s = parseStock(row);
-        if (s.sym) stockData[s.sym] = s;
-        else console.warn('No sym in row:', JSON.stringify(row).slice(0,120));
-      }
-    } catch(e) {
-      console.warn('Batch error:', batch[0], e.message);
-    }
-    done += batch.length;
-    updateProgress(done, NSE_UNIVERSE.length);
-    // Render immediately after each batch so results appear as they load
+  // API appears to return a fixed pool of ~60 stocks regardless of symbol filter.
+  // Strategy: send ALL symbols in one call to get max coverage, then do a second
+  // call with the symbols NOT returned to pick up the rest.
+  const updateProgress = (msg) => {
+    const el = document.getElementById('progress-label');
+    if (el) el.textContent = msg;
+  };
+
+  const renderCurrent = () => {
     const stocks = Object.values(stockData);
     updateBadges(stocks);
     renderPicks(stocks);
     renderUniverse(stocks);
     renderSummary(stocks);
+  };
+
+  try {
+    updateProgress('Loading universe… pass 1');
+    const rows1 = await fetchStocks(NSE_UNIVERSE);
+    for (const row of rows1) {
+      const s = parseStock(row);
+      if (s.sym) stockData[s.sym] = s;
+    }
+    renderCurrent();
     await new Promise(r => setTimeout(r, 0));
+
+    // Second pass: fetch symbols missing from first response
+    const missing = NSE_UNIVERSE.filter(sym => !stockData[sym]);
+    if (missing.length > 0) {
+      updateProgress(`Loading universe… pass 2 (${missing.length} remaining)`);
+      const rows2 = await fetchStocks(missing);
+      for (const row of rows2) {
+        const s = parseStock(row);
+        if (s.sym) stockData[s.sym] = s;
+      }
+      renderCurrent();
+    }
+
+    // Third pass if still missing
+    const missing2 = NSE_UNIVERSE.filter(sym => !stockData[sym]);
+    if (missing2.length > 0) {
+      updateProgress(`Loading universe… pass 3 (${missing2.length} remaining)`);
+      const rows3 = await fetchStocks(missing2);
+      for (const row of rows3) {
+        const s = parseStock(row);
+        if (s.sym) stockData[s.sym] = s;
+      }
+      renderCurrent();
+    }
+
+  } catch(e) {
+    console.warn('loadAll error:', e.message);
   }
 
   setLoading(false);
   renderWatchlist();
-}
-
-function updateProgress(done, total) {
-  const pct = Math.round(done / total * 100);
-  const el = document.getElementById('progress-label');
-  if (el) el.textContent = `Loading… ${pct}%`;
+  console.log('[loadAll done] total stocks:', Object.keys(stockData).length);
 }
 
 function setLoading(on) {
