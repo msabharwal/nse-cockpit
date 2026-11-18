@@ -1024,12 +1024,6 @@ async function fetchStocks(symbols) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
     if (json.result !== 'success') throw new Error(json.error?.message || 'API error');
-    // Log category distribution from first batch for verification
-    if (json.data?.[0]?.symbol === 'RELIANCE.NSE') {
-      const cats = {};
-      json.data.forEach(r => { const c = (r.data||[]).slice(-1)[0]?.category||'?'; cats[c]=(cats[c]||0)+1; });
-      console.log('[API categories]', cats);
-    }
     return json.data;
   } catch(e) {
     console.warn('[direct failed]', e.message, '— trying allorigins proxy');
@@ -1117,15 +1111,15 @@ function parseStock(raw) {
     daily,
     weekly,
     monthly,
-    expiry:   latest.expirydatetime || latest.date || '',
-    date:     latest.date || '',
+    expiry:   latest.expirydatetime || '',
+    date:     latest.expirydatetime || '',
   };
 }
 
 /* ══════════════════════════════════════════════════════════
    LOAD PIPELINE
 ══════════════════════════════════════════════════════════ */
-const BATCH = 20; // symbols per API call
+const BATCH = 10; // symbols per API call — API caps response at ~60, so keep batches small
 
 async function loadAll() {
   setLoading(true);
@@ -1185,7 +1179,11 @@ async function loadPulse() {
   pulseLoading = true;
   try {
     const rows = await fetchStocks(PULSE_SYMS);
-    const chips = rows.map(r => {
+    // API may return more symbols than requested — filter to only our pulse list
+    const pulseSet = new Set(PULSE_SYMS);
+    const filtered = rows.filter(r => pulseSet.has(r.symbol));
+    const display  = filtered.length ? filtered : rows.slice(0, PULSE_SYMS.length);
+    const chips = display.map(r => {
       const s = parseStock(r);
       const sym = s.sym.replace('.NSE','');
       const up  = s.chgPct >= 0;
