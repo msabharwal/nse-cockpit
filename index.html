@@ -1017,35 +1017,33 @@ const CAT_CSS = {
 // Fetch a single batch (≤20 symbols) from the API
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function fetchBatch(symbols, retries = 3) {
+async function fetchBatch(symbols) {
   const sym = symbols.join(',');
   const url = `${API_ORIGIN}?symbols=${sym}&date=&periods=${PERIODS}&columns=${COLUMNS}`;
 
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const res = await fetch(url, { mode: 'cors' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      if (json.result !== 'success') {
-        const msg = json.error?.message || `result=${json.result}`;
-        console.warn(`[batch] attempt ${attempt} failed: ${msg}`);
-        if (attempt < retries) { await sleep(2000 * attempt); continue; }
-        throw new Error(msg);
-      }
-      const requested = new Set(symbols);
-      const all = json.data || [];
-      const filtered = all.filter(r => requested.has(r.symbol));
-      console.log(`[batch] ok symbols=${symbols.length} got=${all.length} matched=${filtered.length}`);
-      return filtered.length ? filtered : all;
-    } catch(e) {
-      if (attempt < retries) {
-        console.warn(`[batch] attempt ${attempt} error: ${e.message} — retrying in ${2*attempt}s`);
-        await sleep(2000 * attempt);
-      } else {
-        throw e;
-      }
-    }
+  let json;
+  try {
+    const res = await fetch(url, { mode: 'cors' });
+    const text = await res.text();
+    console.log(`[batch] raw response (${symbols[0]}…): ${text.slice(0, 200)}`);
+    json = JSON.parse(text);
+  } catch(e) {
+    console.error(`[batch] fetch/parse failed:`, e.message);
+    return [];
   }
+
+  // Accept data regardless of result field — API sometimes returns data even with result:'error'
+  const all = json.data || [];
+  console.log(`[batch] result=${json.result} data.length=${all.length} err=${json.error?.message||''}`);
+
+  if (all.length === 0 && json.result !== 'success') {
+    console.warn(`[batch] no data for`, symbols.slice(0,3));
+    return [];
+  }
+
+  const requested = new Set(symbols);
+  const filtered = all.filter(r => requested.has(r.symbol));
+  return filtered.length ? filtered : all;
 }
 
 // fetchStocks used by pulse ticker and stock detail panel
@@ -1162,7 +1160,15 @@ async function loadAll() {
   renderUniverse(finalStocks);
   renderSummary(finalStocks);
   renderWatchlist();
-  console.log('[loadAll done] total stocks:', Object.keys(stockData).length);
+  const count = Object.keys(stockData).length;
+  console.log('[loadAll done] total stocks:', count);
+  if (count === 0) {
+    console.error('[loadAll] ZERO stocks — check batch logs above for raw API response');
+    document.getElementById('picks-container').innerHTML =
+      '<div class="loading-state" style="color:var(--red2)">⚠ API returned no data — check console for details</div>';
+    document.getElementById('universe-container').innerHTML =
+      '<div class="loading-state" style="color:var(--red2)">⚠ API returned no data — check console for details</div>';
+  }
 }
 
 function setLoading(on) {
