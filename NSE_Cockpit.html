@@ -2409,6 +2409,7 @@ function initUniverse() {
 
 // ── INIT ──
 document.addEventListener('DOMContentLoaded', () => {
+  try {
   initUniverse();
   selectedPick = BAKED.picks[0];
   renderSidebar();
@@ -2419,9 +2420,9 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchLiveData();
 
   // Portfolio input live update
-  $('portfolio-size').addEventListener('input', e => {
+  const portEl = $('portfolio-size');
+  if (portEl) portEl.addEventListener('input', e => {
     basketPortfolio = parseInt(e.target.value.replace(/,/g, '')) || 100000;
-    // Recalculate basket quantities
     Object.keys(basket).forEach(sym => {
       const p = basket[sym];
       const allocation = (BAKED.picks.find(x => x.s === sym)?.al || 5) / 100 * basketPortfolio;
@@ -2431,13 +2432,15 @@ document.addEventListener('DOMContentLoaded', () => {
     renderBasket();
   });
 
-  // Theme toggle — dark is default; button switches to light and back
-  $('theme-btn').addEventListener('click', () => {
+  // Theme toggle
+  const themeBtn = $('theme-btn');
+  if (themeBtn) themeBtn.addEventListener('click', () => {
     const root = document.documentElement;
     const isDark = root.dataset.theme !== 'light';
     root.dataset.theme = isDark ? 'light' : 'dark';
-    $('theme-btn').title = isDark ? 'Switch to dark mode' : 'Switch to light mode';
+    themeBtn.title = isDark ? 'Switch to dark mode' : 'Switch to light mode';
   });
+  } catch(e) { console.error('NSE Cockpit init error:', e); }
 });
 </script>
 
@@ -2899,25 +2902,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
 <script>
 // ── POST-INIT: inject baked data values ──
-(function() {
+// Safe helper — never throws on missing element
+function safeSet(id, text, prop) {
+  const el = document.getElementById(id);
+  if (el) el[prop || 'textContent'] = text;
+}
+
+function postInit() {
   // Top bar stats
-  $('universe-count').textContent = BAKED.universe_count.toLocaleString() + ' scored';
+  safeSet('universe-count', BAKED.universe_count.toLocaleString() + ' scored');
   const unvTab = document.getElementById('sidebar-tab-universe');
   if (unvTab) unvTab.textContent = 'All ' + BAKED.universe_count.toLocaleString();
-  $('green-count').textContent = '+' + BAKED.green_count + ' green';
-  $('watch-count').textContent = BAKED.watch_count + ' watchouts';
+  safeSet('green-count', '+' + (BAKED.green_count || 0) + ' green');
+  safeSet('watch-count', (BAKED.watch_count || 0) + ' watchouts');
   const [y, m, d] = BAKED.trading_date.split('-');
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  $('trade-date').textContent = `EOD ${d} ${months[+m-1]} ${y}`;
+  safeSet('trade-date', `EOD ${d} ${months[+m-1]} ${y}`);
 
   // Timeline labels
   if (histDates.length > 0) {
     const labels = [];
     const step = Math.floor(histDates.length / 5);
     for (let i = 0; i < histDates.length; i += step) labels.push(histDates[i].slice(5));
-    $('tl-labels').innerHTML = labels.map(l => `<span>${l}</span>`).join('');
+    const tlEl = document.getElementById('tl-labels');
+    if (tlEl) tlEl.innerHTML = labels.map(l => `<span>${l}</span>`).join('');
   }
-})();
+}
+
+// Run after DOM is ready (or immediately if already ready)
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', postInit);
+} else {
+  postInit();
+}
 
 function setFilter(f, el) {
   activeFilter = f;
