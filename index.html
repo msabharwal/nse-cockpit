@@ -1025,9 +1025,18 @@ async function fetchStocks(symbols) {
 }
 
 function parseStock(raw) {
-  // raw is one item from json.data array
-  // data[0] = Daily, data[1] = Weekly, data[2] = Monthly
-  const daily   = raw.data || [];
+  // API returns: raw = { symbol, data: [ {period,days,data:[candles]}, ... ] }
+  // data[0] = Daily period, data[1] = Weekly, data[2] = Monthly
+  // Each period object has a .data array of candles
+  const periods  = raw.data || [];                       // array of period objects
+  const dailyObj = periods.find(p => p.period === 'Daily' || p.period === 'D') || periods[0] || {};
+  const weeklyObj= periods.find(p => p.period === 'W' || p.period === 'Weekly') || periods[1] || {};
+  const monthlyObj=periods.find(p => p.period === 'M' || p.period === 'Monthly')|| periods[2] || {};
+
+  const daily   = dailyObj.data  || [];
+  const weekly  = weeklyObj.data || [];
+  const monthly = monthlyObj.data|| [];
+
   const latest  = daily[daily.length - 1] || {};
   const prev    = daily[daily.length - 2] || {};
 
@@ -1041,37 +1050,42 @@ function parseStock(raw) {
     ? daily.slice(-3).reduce((s, c) => s + ((c.high - c.low) / (c.close || 1)) * 100, 0) / 3
     : 2;
 
+  // Category — API returns e.g. "WATCH OUT", "VERY BULLISH", "RANGING" etc.
   const cat = (latest.category || 'RANGING').trim().toUpperCase();
 
+  // Helper to grab a field that may have key variants
+  const f = (obj, ...keys) => { for (const k of keys) if (obj[k] != null) return obj[k]; return 0; };
+
   return {
-    sym:     raw.symbol || '',
-    name:    raw.name   || '',
+    sym:      raw.symbol || '',
+    name:     raw.name   || '',
     close,
     chgAbs,
     chgPct,
-    open:    latest.open    || 0,
-    high:    latest.high    || 0,
-    low:     latest.low     || 0,
-    adjClose:latest.adj_close|| close,
-    rsi:     latest.rsi     || 0,
-    macd:    latest.macd    || 0,
-    macdSig: latest.macdsignal || 0,
-    macdHist:latest.macdhist|| 0,
-    ema5:    latest['ema_5'] || latest['ema_5-D'] || 0,
-    ema9:    latest['ema_9'] || latest['ema_9-D'] || 0,
-    ema26:   latest['ema_26']|| latest['ema_26-D']|| 0,
-    sma10:   latest['sma_10']|| latest['sma_10-D']|| 0,
-    sma20:   latest['sma_20']|| latest['sma_20-D']|| 0,
-    sma50:   latest['sma_50']|| latest['sma_50-D']|| 0,
-    sma100:  latest.sma_100  || 0,
-    sma200:  latest.sma_200  || 0,
-    volume:  latest.volume   || 0,
+    open:     latest.open     || 0,
+    high:     latest.high     || 0,
+    low:      latest.low      || 0,
+    adjClose: latest.adj_close|| close,
+    rsi:      latest.rsi      || 0,
+    macd:     latest.macd     || 0,
+    macdSig:  latest.macdsignal || 0,
+    macdHist: latest.macdhist || 0,
+    ema5:     f(latest,'ema_5','ema_5-D'),
+    ema9:     f(latest,'ema_9','ema_9-D'),
+    ema26:    f(latest,'ema_26','ema_26-D'),
+    sma10:    f(latest,'sma_10','sma_10-D'),
+    sma20:    f(latest,'sma_20','sma_20-D'),
+    sma50:    f(latest,'sma_50','sma_50-D'),
+    sma100:   latest.sma_100  || 0,
+    sma200:   latest.sma_200  || 0,
+    volume:   latest.volume   || 0,
     category: cat,
     atrPct,
     daily,
-    weekly:  raw.data?.[1]?.data || [],
-    monthly: raw.data?.[2]?.data || [],
-    expiry:  latest.expirydatetime || '',
+    weekly,
+    monthly,
+    expiry:   latest.expirydatetime || latest.date || '',
+    date:     latest.date || '',
   };
 }
 
@@ -1092,12 +1106,14 @@ async function loadAll() {
   for (const batch of batches) {
     try {
       const rows = await fetchStocks(batch);
-      for (const row of rows) {
+      if (!Array.isArray(rows)) { console.warn('Unexpected API shape:', rows); }
+      else for (const row of rows) {
         const s = parseStock(row);
         if (s.sym) stockData[s.sym] = s;
+        else console.warn('No sym in row:', JSON.stringify(row).slice(0,120));
       }
     } catch(e) {
-      console.warn('Batch error:', e.message);
+      console.warn('Batch error:', batch[0], e.message);
     }
     done += batch.length;
     updateProgress(done, NSE_UNIVERSE.length);
@@ -1128,9 +1144,12 @@ function setLoading(on) {
 /* ══════════════════════════════════════════════════════════
    MARKET PULSE (top bar)
 ══════════════════════════════════════════════════════════ */
-const PULSE_SYMS = ['NIFTY.NSE','RELIANCE.NSE','INFY.NSE','HDFCBANK.NSE','TCS.NSE'];
+const PULSE_SYMS = ['RELIANCE.NSE','INFY.NSE','HDFCBANK.NSE','TCS.NSE','ICICIBANK.NSE','SBIN.NSE'];
+let pulseLoading = false;
 
 async function loadPulse() {
+  if (pulseLoading) return;   // prevent double calls
+  pulseLoading = true;
   try {
     const rows = await fetchStocks(PULSE_SYMS);
     const chips = rows.map(r => {
@@ -1142,9 +1161,11 @@ async function loadPulse() {
         <span class="chg ${up ? 'up' : 'dn'}">${up ? '▲' : '▼'} ${Math.abs(s.chgPct).toFixed(2)}%</span>
       </div>`;
     }).join('');
-    document.getElementById('market-pulse').innerHTML = chips || '<div class="pulse-chip"><span class="sym fg3">—</span></div>';
+    document.getElementById('market-pulse').innerHTML = chips || '<div class="pulse-chip"><span class="sym">—</span></div>';
   } catch(e) {
     console.warn('Pulse error', e);
+  } finally {
+    pulseLoading = false;
   }
 }
 
@@ -1211,17 +1232,22 @@ function pickCard(s, portSize) {
 
   const macdBull = s.macdHist > 0;
   const sym = s.sym.replace('.NSE','');
+  const dateLabel = s.date ? new Date(s.date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'}) : '';
 
   return `<div class="pick-card cat-${catCss}" onclick="openDetail('${s.sym}')">
     <div class="pick-top">
       <div>
         <div class="pick-sym">${sym}</div>
-        <div class="pick-name">${s.name || sym}</div>
+        <div class="pick-name" style="display:flex;gap:6px;align-items:center">
+          <span>${s.name || sym}</span>
+          ${dateLabel ? `<span style="color:var(--fg3);font-size:9px">${dateLabel}</span>` : ''}
+        </div>
         <div style="margin-top:5px"><span class="sig sig-${catCss}">${s.category}</span></div>
       </div>
       <div class="pick-price">
         <div class="price">₹${s.close.toFixed(2)}</div>
         <div class="chg ${up ? 'up' : 'dn'}">${up ? '▲' : '▼'} ${Math.abs(s.chgPct).toFixed(2)}%</div>
+        <div style="font-size:9px;color:var(--fg3);margin-top:2px">O:${s.open.toFixed(0)} H:${s.high.toFixed(0)} L:${s.low.toFixed(0)}</div>
       </div>
     </div>
 
@@ -1289,12 +1315,17 @@ function renderUniverse(stocks) {
     const up  = s.chgPct >= 0;
     const catCss = CAT_CSS[s.category] || 'RANGING';
     const rsiColor = s.rsi > 70 ? 'var(--red2)' : s.rsi > 55 ? 'var(--green2)' : 'var(--fg2)';
+    const dateLabel = s.date ? new Date(s.date).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) : '';
     return `<div class="stock-row" onclick="openDetail('${s.sym}')">
       <div class="stock-row-left">
         <div class="sig-dot ${catCss}"></div>
         <div>
           <div class="stock-sym">${sym}</div>
-          <div class="stock-name">${s.category}</div>
+          <div class="stock-name" style="display:flex;gap:6px">
+            <span class="sig sig-${catCss}" style="font-size:9px;padding:1px 5px">${s.category}</span>
+            ${dateLabel ? `<span style="color:var(--fg3)">${dateLabel}</span>` : ''}
+          </div>
+          <div style="font-size:9px;color:var(--fg3);margin-top:2px">O:${s.open.toFixed(1)} H:${s.high.toFixed(1)} L:${s.low.toFixed(1)} V:${fmtVol(s.volume)}</div>
         </div>
       </div>
       <div class="stock-row-right">
