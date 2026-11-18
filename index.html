@@ -1059,6 +1059,14 @@ function parseStock(raw) {
   // data[0] = Daily period, data[1] = Weekly, data[2] = Monthly
   // Each period object has a .data array of candles
   const periods  = raw.data || [];                       // array of period objects
+
+  // DEBUG: log first stock structure so we can see real field names
+  if (raw.symbol === 'RELIANCE.NSE' && periods.length > 0) {
+    const d0 = periods[0];
+    const lastCandle = (d0.data || []).slice(-1)[0];
+    console.log('[parseStock DEBUG] periods[0].period =', d0.period, '| candle keys:', Object.keys(lastCandle||{}), '| category =', lastCandle?.category, '| close =', lastCandle?.close);
+  }
+
   const dailyObj = periods.find(p => p.period === 'Daily' || p.period === 'D') || periods[0] || {};
   const weeklyObj= periods.find(p => p.period === 'W' || p.period === 'Weekly') || periods[1] || {};
   const monthlyObj=periods.find(p => p.period === 'M' || p.period === 'Monthly')|| periods[2] || {};
