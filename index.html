@@ -1014,24 +1014,39 @@ const CAT_CSS = {
 /* ══════════════════════════════════════════════════════════
    API
 ══════════════════════════════════════════════════════════ */
-async function fetchStocks(symbols) {
-  // Pass symbols unencoded — commas must stay as literal ',' so the browser
-  // sends a simple GET (no preflight) and the API's CORS header is accepted.
+// Fetch a single batch (≤20 symbols) from the API
+async function fetchBatch(symbols) {
   const sym = symbols.join(',');
   const url = `${API_ORIGIN}?symbols=${sym}&date=&periods=${PERIODS}&columns=${COLUMNS}`;
-
-  async function extractData(json) {
-    if (json.result !== 'success') throw new Error(json.error?.message || 'API error');
-    const requested = new Set(symbols);
-    const all = json.data || [];
-    const filtered = all.filter(r => requested.has(r.symbol));
-    console.log(`[fetch] requested ${symbols.length}, api returned ${all.length}, matched ${filtered.length}, first=${filtered[0]?.symbol}`);
-    return filtered.length ? filtered : all;
-  }
-
   const res = await fetch(url, { mode: 'cors' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return await extractData(await res.json());
+  const json = await res.json();
+  console.log(`[batch] symbols=${symbols.length} result=${json.result} data=${json.data?.length} err=${json.error?.message||''}`);
+  if (json.result !== 'success') {
+    // Log full response for debugging
+    console.warn('[batch error response]', JSON.stringify(json).slice(0, 300));
+    throw new Error(json.error?.message || `result=${json.result}`);
+  }
+  const requested = new Set(symbols);
+  const all = json.data || [];
+  const filtered = all.filter(r => requested.has(r.symbol));
+  return filtered.length ? filtered : all;
+}
+
+// Fetch all symbols in batches of 20
+async function fetchStocks(symbols) {
+  const BATCH = 20;
+  const results = [];
+  for (let i = 0; i < symbols.length; i += BATCH) {
+    const batch = symbols.slice(i, i + BATCH);
+    try {
+      const rows = await fetchBatch(batch);
+      results.push(...rows);
+    } catch(e) {
+      console.warn(`[fetchStocks] batch ${i}-${i+BATCH} failed:`, e.message);
+    }
+  }
+  return results;
 }
 
 function parseStock(raw) {
@@ -1104,58 +1119,33 @@ async function loadAll() {
   setLoading(true);
   stockData = {};
 
-  // API appears to return a fixed pool of ~60 stocks regardless of symbol filter.
-  // Strategy: send ALL symbols in one call to get max coverage, then do a second
-  // call with the symbols NOT returned to pick up the rest.
   const updateProgress = (msg) => {
     const el = document.getElementById('progress-label');
     if (el) el.textContent = msg;
   };
 
-  const renderCurrent = () => {
-    const stocks = Object.values(stockData);
-    updateBadges(stocks);
-    renderPicks(stocks);
-    renderUniverse(stocks);
-    renderSummary(stocks);
-  };
+  const BATCH = 20;
+  const total = NSE_UNIVERSE.length;
 
-  try {
-    updateProgress('Loading universe… pass 1');
-    const rows1 = await fetchStocks(NSE_UNIVERSE);
-    for (const row of rows1) {
-      const s = parseStock(row);
-      if (s.sym) stockData[s.sym] = s;
-    }
-    renderCurrent();
-    await new Promise(r => setTimeout(r, 0));
-
-    // Second pass: fetch symbols missing from first response
-    const missing = NSE_UNIVERSE.filter(sym => !stockData[sym]);
-    if (missing.length > 0) {
-      updateProgress(`Loading universe… pass 2 (${missing.length} remaining)`);
-      const rows2 = await fetchStocks(missing);
-      for (const row of rows2) {
+  for (let i = 0; i < total; i += BATCH) {
+    const batch = NSE_UNIVERSE.slice(i, i + BATCH);
+    updateProgress(`Loading… ${Math.min(i + BATCH, total)} / ${total}`);
+    try {
+      const rows = await fetchBatch(batch);
+      for (const row of rows) {
         const s = parseStock(row);
         if (s.sym) stockData[s.sym] = s;
       }
-      renderCurrent();
+      // Re-render after each batch so user sees incremental results
+      const stocks = Object.values(stockData);
+      updateBadges(stocks);
+      renderPicks(stocks);
+      renderUniverse(stocks);
+      renderSummary(stocks);
+      await new Promise(r => setTimeout(r, 0)); // yield to browser
+    } catch(e) {
+      console.warn(`[loadAll] batch ${i}-${i+BATCH} error:`, e.message);
     }
-
-    // Third pass if still missing
-    const missing2 = NSE_UNIVERSE.filter(sym => !stockData[sym]);
-    if (missing2.length > 0) {
-      updateProgress(`Loading universe… pass 3 (${missing2.length} remaining)`);
-      const rows3 = await fetchStocks(missing2);
-      for (const row of rows3) {
-        const s = parseStock(row);
-        if (s.sym) stockData[s.sym] = s;
-      }
-      renderCurrent();
-    }
-
-  } catch(e) {
-    console.warn('loadAll error:', e.message);
   }
 
   setLoading(false);
