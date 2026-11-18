@@ -102,7 +102,10 @@ def main():
 
     print(f"Reading {SIGNALS_FILE} …")
     with open(SIGNALS_FILE) as f:
-        signals = json.load(f)
+        raw = f.read()
+    # Replace NaN (Python/pandas artifact) with null before parsing
+    raw = raw.replace(": NaN", ": null").replace(":NaN", ":null")
+    signals = json.loads(raw)
 
     universe_raw = signals.get("universe", [])
     trading_date = signals.get("trading_date", date.today().isoformat())
@@ -112,19 +115,24 @@ def main():
     scored = []
     for s in universe_raw:
         sc = score_stock(s)
+        price = float(s.get("price", s.get("close", 0)) or 0)
         scored.append({
             "s":   s.get("symbol", ""),
             "n":   s.get("name",   s.get("symbol", "")),
             "x":   s.get("sector", "Other"),
-            "p":   round(float(s.get("price", 0)),       2),
-            "r":   round(float(s.get("rsi",   50)),      1),
-            "v":   round(float(s.get("vol_ratio", 1)),   2),
-            "g":   round(float(s.get("sma10gap", 0)),    2),
-            "c":   round(float(s.get("day_chg_pct", 0)), 2),
-            "a":   round(float(s.get("atr_pct", 2)),     2),
-            "w":   round(sc * 50, 1),     # legacy weight field
-            "sc":  round(sc * 50, 1),     # score used by cockpit JS
-            "al":  5.0,                   # placeholder; replaced below for top 100
+            "dt":  s.get("date",   trading_date),          # trading date
+            "o":   round(float(s.get("open",  price) or price), 2),
+            "h":   round(float(s.get("high",  price) or price), 2),
+            "l":   round(float(s.get("low",   price) or price), 2),
+            "p":   round(price, 2),                        # close / price
+            "r":   round(float(s.get("rsi",   50)   or 50),  1),
+            "v":   round(float(s.get("vol_ratio", 1) or 1),  2),
+            "g":   round(float(s.get("sma10gap", 0) or 0),   2),
+            "c":   round(float(s.get("day_chg_pct", 0) or 0),2),
+            "a":   round(float(s.get("atr_pct", 2)  or 2),   2),
+            "w":   round(sc * 50, 1),
+            "sc":  round(sc * 50, 1),
+            "al":  5.0,
             "cap": s.get("cap", -1),
         })
 

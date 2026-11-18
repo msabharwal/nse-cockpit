@@ -10,41 +10,40 @@
 <style>
 /* ── TOKENS ── */
 :root {
-  --bg:      #0b0e18;
-  --bg2:     #0e1225;
-  --bg3:     #12162a;
-  --bg4:     #1a1f36;
-  --border:  #1e2545;
-  --border2: #2a3060;
-  --fg:      #e8ecf8;
-  --fg2:     #8892b0;
-  --fg3:     #5a6490;
-  --accent:  #4f8ef7;
-  --accent2: #6ee7b7;
-  --warn:    #f59e0b;
-  --red:     #ef4444;
-  --green:   #22c55e;
-  --purple:  #a78bfa;
+  --bg:      #080b10;
+  --bg2:     #0d1117;
+  --bg3:     #111620;
+  --bg4:     #161c28;
+  --border:  #1c2333;
+  --border2: #253047;
+  --fg:      #cdd5e0;
+  --fg2:     #7a8599;
+  --fg3:     #3d4a60;
+  --accent:  #2f80ed;
+  --accent2: #00b386;
+  --warn:    #e6a817;
+  --red:     #e05252;
+  --green:   #27ae60;
+  --purple:  #8b6fd4;
   color-scheme: dark;
 }
-/* Light override */
 :root[data-theme="light"] {
-  --bg:      #f0f4ff;
+  --bg:      #f4f6f9;
   --bg2:     #ffffff;
-  --bg3:     #e8edf8;
-  --bg4:     #d6dcf5;
-  --border:  #c0ccee;
-  --border2: #a0b0e0;
-  --fg:      #111827;
-  --fg2:     #4b5570;
-  --fg3:     #8892b0;
+  --bg3:     #edf0f5;
+  --bg4:     #e2e6ef;
+  --border:  #d0d7e3;
+  --border2: #b8c2d8;
+  --fg:      #0d1117;
+  --fg2:     #3d4a60;
+  --fg3:     #7a8599;
   color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    --bg: #f0f4ff; --bg2: #ffffff; --bg3: #e8edf8; --bg4: #d6dcf5;
-    --border: #c0ccee; --border2: #a0b0e0;
-    --fg: #111827; --fg2: #4b5570; --fg3: #8892b0;
+    --bg: #f4f6f9; --bg2: #ffffff; --bg3: #edf0f5; --bg4: #e2e6ef;
+    --border: #d0d7e3; --border2: #b8c2d8;
+    --fg: #0d1117; --fg2: #3d4a60; --fg3: #7a8599;
     color-scheme: light;
   }
 }
@@ -372,9 +371,13 @@ body {
 .data-table tbody tr.watchout-row { background: rgba(239,68,68,.03); }
 
 .t-rank { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--fg3); }
-.t-sym { font-family: 'Space Grotesk', sans-serif; font-size: 12px; font-weight: 600; color: var(--fg); }
-.t-name { font-size: 9px; color: var(--fg3); }
-.t-mono { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--fg); }
+.t-sym { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 500; color: var(--fg); letter-spacing: .02em; }
+.t-name { font-size: 9px; color: var(--fg3); margin-top: 1px; }
+.t-date { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--fg3); margin-top: 1px; }
+.t-mono { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--fg2); }
+.t-muted { color: var(--fg3) !important; }
+.t-high { color: #2ecc71 !important; }
+.t-low  { color: #e05252 !important; }
 .t-up { color: var(--green) !important; }
 .t-dn { color: var(--red) !important; }
 
@@ -1594,11 +1597,13 @@ function renderTable() {
   const thead = `<tr>
     <th>#</th>
     <th onclick="toggleSort('s')">Symbol${sortIndicator('s')}</th>
-    <th onclick="toggleSort('p')">Price${sortIndicator('p')}</th>
+    <th onclick="toggleSort('p')" title="Last close price">Close${sortIndicator('p')}</th>
+    <th onclick="toggleSort('o')" title="Day open">Open${sortIndicator('o')}</th>
+    <th onclick="toggleSort('h')" title="Day high">High${sortIndicator('h')}</th>
+    <th onclick="toggleSort('l')" title="Day low">Low${sortIndicator('l')}</th>
     <th onclick="toggleSort('c')">Day%${sortIndicator('c')}</th>
     <th onclick="toggleSort('r')">RSI${sortIndicator('r')}</th>
     <th onclick="toggleSort('v')">Vol×${sortIndicator('v')}</th>
-    <th onclick="toggleSort('g')">SMA10${sortIndicator('g')}</th>
     <th onclick="toggleSort('sc')">Score${sortIndicator('sc')}</th>
     <th>Signal</th>
     <th>Alloc</th>
@@ -1609,13 +1614,21 @@ function renderTable() {
     const isWatch = sig.key === 'watch';
     const rC = rsiColor(p.r ?? 50);
     const vSafe = isNaN(p.v) ? 0 : (p.v ?? 0);
+    const dateLabel = p.dt ? `<div class="t-date">${p.dt}</div>` : '';
+    const oVal = p.o && p.o !== p.p ? fmtRs(p.o) : '—';
+    const hVal = p.h && p.h !== p.p ? fmtRs(p.h) : '—';
+    const lVal = p.l && p.l !== p.p ? fmtRs(p.l) : '—';
     return `<tr class="${isWatch?'watchout-row':''} ${selectedPick?.s===p.s?'selected':''}" onclick="selectAndSpotlight('${p.s}')">
       <td class="t-rank">${i+1}</td>
       <td>
         <div class="t-sym">${p.s}</div>
         <div class="t-name">${p.x||''}</div>
+        ${dateLabel}
       </td>
       <td><span class="t-mono">${fmtRs(p.p)}</span></td>
+      <td><span class="t-mono t-muted">${oVal}</span></td>
+      <td><span class="t-mono t-high">${hVal}</span></td>
+      <td><span class="t-mono t-low">${lVal}</span></td>
       <td><span class="t-mono ${clrCls(p.c??0)}">${fmtPct(p.c)}</span></td>
       <td>
         <div class="inl-bar">
@@ -1629,7 +1642,6 @@ function renderTable() {
           <div class="inl-track"><div class="inl-fill" style="width:${Math.min(vSafe/5*100,100)}%;background:var(--accent)"></div></div>
         </div>
       </td>
-      <td><span class="t-mono ${clrCls(p.g??0)}">${(p.g??0) > 0 ? '+' : ''}${fmt(p.g)}%</span></td>
       <td><span class="t-mono" style="color:var(--accent)">${(p.sc??0).toFixed(0)}</span></td>
       <td><span class="sig-badge ${sig.cls}">${sig.label}</span></td>
       <td>
@@ -1639,7 +1651,7 @@ function renderTable() {
     </tr>`;
   }).join('');
 
-  $('table-body').innerHTML = rows || `<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--fg3)">No stocks match current filters</td></tr>`;
+  $('table-body').innerHTML = rows || `<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--fg3)">No stocks match current filters</td></tr>`;
   $('table-head').innerHTML = thead;
   $('table-count').textContent = data.length.toLocaleString() + ' stocks';
 }
@@ -2406,9 +2418,9 @@ document.addEventListener('DOMContentLoaded', () => {
   <span class="top-pill pill-warn" id="watch-count">— watchouts</span>
   <div class="top-meta" id="trade-date">—</div>
   <div class="top-actions">
-    <button class="btn btn-ghost" id="theme-btn">☀️</button>
-    <button class="btn btn-primary" onclick="addAllToBasket(); switchView('basket')">📦 Build Basket</button>
-    <button class="btn btn-basket" onclick="switchView('basket')">📤 Sharekhan</button>
+    <button class="btn btn-ghost" id="theme-btn" title="Toggle light/dark">◑</button>
+    <button class="btn btn-primary" onclick="addAllToBasket(); switchView('basket')">Build Basket</button>
+    <button class="btn btn-basket" onclick="switchView('basket')">Sharekhan ↗</button>
   </div>
 </div>
 
@@ -2419,9 +2431,9 @@ document.addEventListener('DOMContentLoaded', () => {
   <div class="sidebar">
     <div class="sidebar-tabs">
       <div class="stab active" data-tab="picks" onclick="switchSidebarTab('picks')">Top 100</div>
-      <div class="stab" data-tab="universe" onclick="switchSidebarTab('universe')">All 497 ↓</div>
-      <div class="stab" data-tab="watchouts" onclick="switchSidebarTab('watchouts')">⚠ Watchouts</div>
-      <div class="stab" data-tab="validation" onclick="switchSidebarTab('validation')" style="color:var(--accent)">📊 Report</div>
+      <div class="stab" data-tab="universe" onclick="switchSidebarTab('universe')" id="sidebar-tab-universe">All</div>
+      <div class="stab" data-tab="watchouts" onclick="switchSidebarTab('watchouts')">Watch</div>
+      <div class="stab" data-tab="validation" onclick="switchSidebarTab('validation')" style="color:var(--accent)">Report</div>
     </div>
     <div class="sidebar-search-wrap">
       <input class="sidebar-search" id="sidebar-search" type="search" placeholder="Search symbol, name, sector…"
@@ -2429,11 +2441,11 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
     <div class="sidebar-filter-row">
       <button class="sfc active" onclick="setSigFilter('all',this)">All</button>
-      <button class="sfc" onclick="setSigFilter('vbull',this)">▲▲ VBull</button>
-      <button class="sfc" onclick="setSigFilter('bull',this)">▲ Bull</button>
-      <button class="sfc" onclick="setSigFilter('range',this)">↔ Range</button>
-      <button class="sfc" onclick="setSigFilter('bear',this)">▼ Bear</button>
-      <button class="sfc" onclick="setSigFilter('watch',this)">⚠ Watch</button>
+      <button class="sfc" onclick="setSigFilter('vbull',this)">Strong Bull</button>
+      <button class="sfc" onclick="setSigFilter('bull',this)">Bull</button>
+      <button class="sfc" onclick="setSigFilter('range',this)">Range</button>
+      <button class="sfc" onclick="setSigFilter('bear',this)">Bear</button>
+      <button class="sfc" onclick="setSigFilter('watch',this)">Watch</button>
     </div>
     <div class="sidebar-body" id="sidebar-body"></div>
     <div id="sidebar-pager" style="display:none;flex-direction:column;border-top:1px solid var(--border);background:var(--bg2);flex-shrink:0">
@@ -2454,10 +2466,10 @@ document.addEventListener('DOMContentLoaded', () => {
     <!-- VIEW TABS -->
     <div class="view-tabs">
       <div class="vtab active" data-view="picks" onclick="switchView('picks')">Spotlight</div>
-      <div class="vtab" data-view="table" onclick="switchView('table')">All Picks Table</div>
-      <div class="vtab" data-view="backtest" onclick="switchView('backtest')">▶ Backtest</div>
-      <div class="vtab" data-view="basket" onclick="switchView('basket')">🛒 Basket</div>
-      <div class="vtab" data-view="suggest" onclick="switchView('suggest')" style="color:#16a34a;font-weight:700">🧠 Today's Picks</div>
+      <div class="vtab" data-view="table" onclick="switchView('table')">All Picks</div>
+      <div class="vtab" data-view="backtest" onclick="switchView('backtest')">Backtest</div>
+      <div class="vtab" data-view="basket" onclick="switchView('basket')">Basket</div>
+      <div class="vtab" data-view="suggest" onclick="switchView('suggest')" style="color:var(--accent2);font-weight:700">Today's Picks</div>
     </div>
 
     <!-- PICKS / SPOTLIGHT PANEL -->
@@ -2472,12 +2484,12 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="filter-bar-row">
         <input type="search" id="table-search" placeholder="Search…" style="background:var(--bg3);border:1px solid var(--border2);color:var(--fg);border-radius:6px;padding:4px 9px;font-size:11px;outline:none;width:140px" oninput="setTableSearch(this.value)">
         <button class="chip active" onclick="setFilter('all',this)">All</button>
-        <button class="chip" onclick="setFilter('bull',this)">▲ Bullish</button>
-        <button class="chip" onclick="setFilter('green',this)">🟢 ≥+4%</button>
+        <button class="chip" onclick="setFilter('bull',this)">Bullish</button>
+        <button class="chip" onclick="setFilter('green',this)">+4% Day</button>
         <button class="chip" onclick="setFilter('vol',this)">Vol ≥2×</button>
-        <button class="chip" onclick="setFilter('rsi70',this)">RSI≥70</button>
-        <button class="chip" onclick="setFilter('bear',this)">▼ Cautious</button>
-        <button class="chip" onclick="setFilter('watch',this)">⚠ Watch</button>
+        <button class="chip" onclick="setFilter('rsi70',this)">RSI ≥70</button>
+        <button class="chip" onclick="setFilter('bear',this)">Cautious</button>
+        <button class="chip" onclick="setFilter('watch',this)">Watch</button>
         <button class="filter-toggle-btn" id="slider-toggle-btn" onclick="toggleSliders()">⚙ Sliders</button>
         <span style="margin-left:auto;font-size:10px;color:var(--fg3)" id="table-count"></span>
       </div>
@@ -2858,6 +2870,8 @@ document.addEventListener('DOMContentLoaded', () => {
 (function() {
   // Top bar stats
   $('universe-count').textContent = BAKED.universe_count.toLocaleString() + ' scored';
+  const unvTab = document.getElementById('sidebar-tab-universe');
+  if (unvTab) unvTab.textContent = 'All ' + BAKED.universe_count.toLocaleString();
   $('green-count').textContent = '+' + BAKED.green_count + ' green';
   $('watch-count').textContent = BAKED.watch_count + ' watchouts';
   const [y, m, d] = BAKED.trading_date.split('-');

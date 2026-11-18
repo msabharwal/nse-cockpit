@@ -109,7 +109,8 @@ class EODHDClient:
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": "nse-cockpit-pipeline/2.0"})
 
-    def _get(self, path: str, params: dict = None, retries: int = 3) -> list | dict:
+    def _get(self, path: str, params: dict = None, retries: int = 3,
+             allow_402: bool = False) -> list | dict:
         url = f"{EODHD_BASE}/{path}"
         p   = {"api_token": self.api_key, "fmt": "json"}
         if params:
@@ -117,6 +118,10 @@ class EODHDClient:
         for attempt in range(retries):
             try:
                 r = self._session.get(url, params=p, timeout=60)
+                if r.status_code == 402:
+                    # Payment Required — endpoint not on current plan; skip gracefully
+                    log.warning(f"402 Payment Required for {path} — endpoint not on plan; skipping.")
+                    return []
                 if r.status_code == 429:
                     wait = int(r.headers.get("Retry-After", 10))
                     log.warning(f"Rate limited — sleeping {wait}s")
@@ -412,8 +417,16 @@ def calc_52w(closes: pd.Series) -> float:
 def compute_indicators(symbol: str,
                        highs: pd.Series, lows: pd.Series,
                        closes: pd.Series, volumes: pd.Series) -> dict:
+    last_date = closes.index[-1]
+    if hasattr(last_date, "date"):
+        last_date = last_date.date()
     return {
         "symbol":      symbol,
+        "date":        str(last_date),
+        "open":        round(float(closes.iloc[-1]), 2),   # filled from bulk row below
+        "high":        round(float(highs.iloc[-1]),  2),
+        "low":         round(float(lows.iloc[-1]),   2),
+        "close":       round(float(closes.iloc[-1]), 2),
         "price":       round(float(closes.iloc[-1]), 2),
         "rsi":         calc_rsi(closes),
         "atr_pct":     calc_atr(highs, lows, closes),
@@ -609,6 +622,11 @@ def build_signals_json(exchanges_active: list[str],
             "name":        fund.get("name", symbol),
             "sector":      sector,
             "exchange":    ind.get("exchange", exchanges_active[0]),
+            "date":        ind.get("date", trading_date.isoformat()),
+            "open":        ind.get("open",  ind.get("price", 0)),
+            "high":        ind.get("high",  ind.get("price", 0)),
+            "low":         ind.get("low",   ind.get("price", 0)),
+            "close":       ind.get("close", ind.get("price", 0)),
             "price":       ind.get("price", 0),
             "vol":         ind.get("vol", 0),
             "vol_ratio":   ind.get("vol_ratio", 1.0),
@@ -1090,7 +1108,13 @@ def run_pipeline(init_mode: bool = False, exchanges: list[str] = None):
                 if "open" in row.columns and "close" in row.columns:
                     day_open  = float(row["open"].values[0])
                     day_close = float(row["close"].values[0])
+                    day_high  = float(row["high"].values[0]) if "high" in row.columns else day_close
+                    day_low   = float(row["low"].values[0])  if "low"  in row.columns else day_close
                     if day_open > 0:
+                        ind["open"]        = round(day_open,  2)
+                        ind["high"]        = round(day_high,  2)
+                        ind["low"]         = round(day_low,   2)
+                        ind["close"]       = round(day_close, 2)
                         ind["day_chg_pct"] = round((day_close - day_open) / day_open * 100, 2)
             all_indicators[symbol] = ind
 
