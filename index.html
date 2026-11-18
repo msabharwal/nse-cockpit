@@ -954,47 +954,42 @@ const COLUMNS  = 'open,high,low,close,adj_close,rsi,sma_10-D,sma_20-D,sma_50-D,m
 
 // Nifty 500 representative list — the API returns all NSE, we seed
 // with a solid universe of liquid names. Extend as needed.
+// Nifty 500 most liquid — balanced across sectors, loads fast (~10 API calls)
 const NSE_UNIVERSE = [
-  'RELIANCE','TCS','HDFCBANK','INFY','HINDUNILVR','ICICIBANK','SBIN','BHARTIARTL',
-  'KOTAKBANK','AXISBANK','ITC','BAJFINANCE','LT','HCLTECH','WIPRO','ASIANPAINT',
-  'MARUTI','SUNPHARMA','NESTLEIND','TITAN','ULTRACEMCO','TECHM','POWERGRID',
-  'NTPC','INDUSINDBK','BAJAJFINSV','ONGC','COALINDIA','ADANIPORTS','APOLLOHOSP',
-  'DRREDDY','CIPLA','DIVISLAB','EICHERMOT','HEROMOTOCO','BPCL','IOC','GRASIM',
-  'SHREECEM','TATACONSUM','HINDPETRO','DABUR','MARICO','GODREJCP','PIDILITIND',
-  'BERGEPAINT','ASTRAL','VOLTAS','WHIRLPOOL','HAVELLS','CROMPTON','VGUARD',
-  'CUMMINSIND','SIEMENS','ABB','SCHNEIDER','KPIGREEN','TATAPOWER','ADANIGR',
-  'NHPC','SJVN','RECLTD','PFC','IRFC','HUDCO','CANBK','BANKBARODA','PNB',
-  'FEDERALBNK','IDFCFIRSTB','RBLBANK','YESBANK','BANDHANBNK','KARURVYSYA',
-  'DCBBANK','CITYUNIONBANK','SOUTHBANK','INDIAMART','POLICYBZR','NAUKRI',
-  'ZOMATO','PAYTM','IRCTC','DELHIVERY','NYKAA','MAPMYINDIA','EASEMYTRIP',
-  'JUBLFOOD','DEVYANI','SAPPHIRE','WESTLIFE','BIKAJI','TATAELXSI','MPHASIS',
-  'LTTS','COFORGE','PERSISTENT','KPITTECH','ROUTE','HAPPSTMNDS','RATEGAIN',
-  'MASTEK','TANLA','NEWGEN','TRENT','VMART','AVALON','CAMPUS','BATA',
-  'RELAXO','METROGLOBAL','PAGEIND','MANYAVAR','VEDL','HINDALCO','JSWSTEEL',
-  'TATASTEEL','SAIL','NMDC','MOIL','NALCO','WELCORP','APLAPOLLO','JINDALSAW',
-  'AARTIIND','DEEPAKNTR','PIIND','UPL','RALLIS','COROMANDEL','SUMICHEM',
-  'BASF','VINDHYATEL','CASTROLIND','GULFOILLUB','GODFRYPHLP','VSTIND',
-  'RADICO','UNITDSPR','GLOBUSSPR','MCDOWELL-N','GLAXO','PFIZER','SANOFI',
-  'ABBOTINDIA','ALKEM','TORNTPHARM','IPCALAB','GLENMARK','LUPIN','AUROPHARMA',
-  'BIOCON','LALPATHLAB','METROPOLIS','THYROCARE','FORTIS','APOLLOHOSP',
-  'MAXHEALTH','ASTER','NARAYANA','MEDANTA','SUVENPHAR','GRANULES','LAURUSLABS',
-  'STARHEALTH','HDFCLIFE','SBILIFE','ICICIPRULI','MAXLIFE','BAJAJHLDNG',
-  'CHOLAFIN','MANAPPURAM','MUTHOOTFIN','LICHSGFIN','IIFL','PNBHOUSING',
-  'CANFINHOME','GRUH','REPCO','APTUS','HOMEFIRST','CREDITACC','SPANDANA',
-  'UJJIVANSFB','ESAFSFB','SURYODAY','EQUITASBNK','AUBANK','JANA',
-  'TATACOMM','RAILTEL','BSNL','HFCL','STLTECH','TTML','RJIO','VODA',
-  'IRCON','NCC','RVNL','GRINFRA','KNRCON','PNCINFRA','HG INFRA','DBCORP',
-  'JAGRAN','TVTODAY','NETTV4U','ZEEL','PVRL','INOXLEISURE','UFO','TIPS',
-  'SAREGAMA','EROSMEDIA','SHEMAROO','CUPID','BALRAMCHIN','RENUKA','DHAMPUR',
-  'EID','TRIVENI','DCMSHRIRAM','GNFC','RCF','CHAMBAL','PARADEEP',
-  'DEEPAKFERT','GSFC','ATUL','NOCIL','GHCL','VINYLCHEM','GUJALKALI',
-  'TATACHEM','GHCL','MANALI','ORIENTBELL','CERA','KAJARIA','SOMANY',
-  'KAJARIACER','GREENLAM','CENTURYPLY','GREENPLY','ACTION','KITEX','VARDHMAN',
-  'RAYMOND','RUPA','DOLLAR','LAXMIMACH','GREAVESCOT','ESCORTS','FORCE',
-  'MOTHERSON','BOSCHLTD','MOTHERSUMI','ENDURANCE','SUNDRMFAST','SUPRAJIT',
-  'EXIDEIND','AMARAJABAT','CEATLTD','MRF','APOLLOTYRE','JKTYRE',
-  'BALKRISIND','GABRIEL','LUMAXIND','LUMAXTECH','VARROC','FIEM',
-  'SUBROS','JAYINDUST','IGARASHI','MINDA','UNO MINDA','CRAFTSMAN'
+  // Large cap blue chips
+  'RELIANCE','TCS','HDFCBANK','INFY','ICICIBANK','SBIN','BHARTIARTL','KOTAKBANK',
+  'AXISBANK','LT','HCLTECH','WIPRO','BAJFINANCE','ITC','HINDUNILVR','ASIANPAINT',
+  'MARUTI','SUNPHARMA','TITAN','NTPC','POWERGRID','ONGC','COALINDIA','BAJAJFINSV',
+  'ADANIPORTS','ULTRACEMCO','TECHM','NESTLEIND','INDUSINDBK','DRREDDY',
+  // Banks & Financials
+  'CANBK','BANKBARODA','PNB','FEDERALBNK','IDFCFIRSTB','BANDHANBNK','AUBANK',
+  'CHOLAFIN','MUTHOOTFIN','MANAPPURAM','LICHSGFIN','HDFCLIFE','SBILIFE','ICICIPRULI',
+  'BAJAJHLDNG','RECLTD','PFC','IRFC',
+  // IT & Tech
+  'TATAELXSI','MPHASIS','LTTS','COFORGE','PERSISTENT','KPITTECH','NAUKRI',
+  'ZOMATO','IRCTC','INDIAMART','POLICYBZR',
+  // Pharma & Healthcare
+  'CIPLA','DIVISLAB','LUPIN','AUROPHARMA','ALKEM','TORNTPHARM','GLENMARK',
+  'APOLLOHOSP','LALPATHLAB','METROPOLIS','FORTIS','BIOCON','GRANULES',
+  // Energy & Power
+  'BPCL','IOC','HINDPETRO','TATAPOWER','NHPC','SJVN','ADANIGR',
+  // Metals & Mining
+  'JSWSTEEL','TATASTEEL','HINDALCO','VEDL','SAIL','NMDC','NALCO','APLAPOLLO',
+  // Chemicals & Fertilisers
+  'PIDILITIND','DEEPAKNTR','AARTIIND','TATACHEM','UPL','COROMANDEL','CHAMBAL',
+  'DEEPAKFERT','GSFC','ATUL','NOCIL',
+  // Consumer & FMCG
+  'DABUR','MARICO','GODREJCP','TATACONSUM','JUBLFOOD','RADICO','MCDOWELL-N',
+  'VSTIND','PAGEIND','TRENT','BATA','RELAXO',
+  // Auto & Auto Ancillaries
+  'EICHERMOT','HEROMOTOCO','ESCORTS','BOSCHLTD','MRF','APOLLOTYRE','BALKRISIND',
+  'EXIDEIND','MOTHERSON','ENDURANCE','SUNDRMFAST',
+  // Capital Goods & Infra
+  'SIEMENS','ABB','CUMMINSIND','HAVELLS','RVNL','NCC','IRCON','GRINFRA',
+  // Real Estate & Cement
+  'SHREECEM','GRASIM','KAJARIA','CERA',
+  // Media & Misc
+  'ZEEL','SAREGAMA','CUPID','RAYMOND','VARDHMAN'
 ].map(s => s + '.NSE');
 
 /* ══════════════════════════════════════════════════════════
@@ -1106,12 +1101,17 @@ async function loadAll() {
     }
     done += batch.length;
     updateProgress(done, NSE_UNIVERSE.length);
-    // yield to UI
+    // Render immediately after each batch so results appear as they load
+    const stocks = Object.values(stockData);
+    updateBadges(stocks);
+    renderPicks(stocks);
+    renderUniverse(stocks);
+    renderSummary(stocks);
     await new Promise(r => setTimeout(r, 0));
   }
 
   setLoading(false);
-  renderAll();
+  renderWatchlist();
 }
 
 function updateProgress(done, total) {
@@ -1705,8 +1705,7 @@ function fmtNum(n) {
    REFRESH
 ══════════════════════════════════════════════════════════ */
 async function refreshAll() {
-  loadPulse();
-  await loadAll();
+  await Promise.all([loadPulse(), loadAll()]);
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -1725,8 +1724,8 @@ document.getElementById('picks-container').innerHTML =
 document.getElementById('universe-container').innerHTML =
   `<div class="loading-state"><div class="loader"></div><span>Loading…</span></div>`;
 
-loadPulse();
-loadAll();
+loadPulse();  // top bar ticker — independent, runs once
+loadAll();    // universe batches — renders progressively
 </script>
 </body>
 </html>
