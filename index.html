@@ -1055,25 +1055,15 @@ async function fetchStocks(symbols) {
 }
 
 function parseStock(raw) {
-  // API returns: raw = { symbol, data: [ {period,days,data:[candles]}, ... ] }
-  // data[0] = Daily period, data[1] = Weekly, data[2] = Monthly
-  // Each period object has a .data array of candles
-  const periods  = raw.data || [];                       // array of period objects
-
-  // DEBUG: log full raw structure for first stock
-  if (raw.symbol === 'RELIANCE.NSE') {
-    console.log('[RAW KEYS]', Object.keys(raw));
-    console.log('[RAW.data type]', typeof raw.data, Array.isArray(raw.data) ? 'isArray len='+raw.data.length : '');
-    console.log('[RAW full]', JSON.stringify(raw).slice(0, 500));
-  }
-
-  const dailyObj = periods.find(p => p.period === 'Daily' || p.period === 'D') || periods[0] || {};
-  const weeklyObj= periods.find(p => p.period === 'W' || p.period === 'Weekly') || periods[1] || {};
-  const monthlyObj=periods.find(p => p.period === 'M' || p.period === 'Monthly')|| periods[2] || {};
-
-  const daily   = dailyObj.data  || [];
-  const weekly  = weeklyObj.data || [];
-  const monthly = monthlyObj.data|| [];
+  // ACTUAL API structure (confirmed from debug):
+  // raw = { symbol, name, period:"D", days:6, marketcap, data:[candle, candle, ...] }
+  // raw.data is a flat array of candles — NO nesting by period
+  // Each candle: { close, open, high, low, adj_close, rsi, macd, macdsignal, macdhist,
+  //               ema_5, ema_9, ema_26, sma_10, sma_20, sma_50, sma_100, sma_200,
+  //               volume, category, expirydatetime }
+  const daily   = raw.data || [];
+  const weekly  = [];   // not in this response (we only request D-6 periods)
+  const monthly = [];
 
   const latest  = daily[daily.length - 1] || {};
   const prev    = daily[daily.length - 2] || {};
