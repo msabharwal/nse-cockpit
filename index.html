@@ -1015,42 +1015,23 @@ const CAT_CSS = {
    API
 ══════════════════════════════════════════════════════════ */
 async function fetchStocks(symbols) {
+  // Pass symbols unencoded — commas must stay as literal ',' so the browser
+  // sends a simple GET (no preflight) and the API's CORS header is accepted.
   const sym = symbols.join(',');
-  const directUrl = `${API_ORIGIN}?symbols=${encodeURIComponent(sym)}&date=&periods=${PERIODS}&columns=${COLUMNS}`;
+  const url = `${API_ORIGIN}?symbols=${sym}&date=&periods=${PERIODS}&columns=${COLUMNS}`;
 
-  // Try direct first; filter response to only requested symbols
   async function extractData(json) {
     if (json.result !== 'success') throw new Error(json.error?.message || 'API error');
     const requested = new Set(symbols);
-    // API may return more than requested — keep only what we asked for
-    const filtered = (json.data || []).filter(r => requested.has(r.symbol));
-    console.log(`[fetch] requested ${symbols.length}, got ${json.data?.length}, kept ${filtered.length}, date=${date}, first=${filtered[0]?.symbol}`);
-    return filtered.length ? filtered : (json.data || []);
+    const all = json.data || [];
+    const filtered = all.filter(r => requested.has(r.symbol));
+    console.log(`[fetch] requested ${symbols.length}, api returned ${all.length}, matched ${filtered.length}, first=${filtered[0]?.symbol}`);
+    return filtered.length ? filtered : all;
   }
 
-  try {
-    const res = await fetch(directUrl);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await extractData(await res.json());
-  } catch(e) {
-    console.warn('[direct failed]', e.message, '— trying allorigins proxy');
-  }
-
-  // Fallback: allorigins wraps in { contents: "..." }
-  try {
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(directUrl)}`;
-    const res = await fetch(proxyUrl);
-    if (!res.ok) throw new Error(`allorigins HTTP ${res.status}`);
-    const wrapper = await res.json();
-    return await extractData(JSON.parse(wrapper.contents));
-  } catch(e) {
-    console.warn('[allorigins failed]', e.message, '— trying thingproxy');
-  }
-
-  // Last resort: thingproxy
-  const res2 = await fetch(`https://thingproxy.freeboard.io/fetch/${encodeURIComponent(directUrl)}`);
-  if (!res2.ok) throw new Error(`thingproxy HTTP ${res2.status}`);
-  return await extractData(await res2.json());
+  const res = await fetch(url, { mode: 'cors' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await extractData(await res.json());
 }
 
 function parseStock(raw) {
