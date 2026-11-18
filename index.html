@@ -948,7 +948,7 @@ body {
 /* ══════════════════════════════════════════════════════════
    CONFIG
 ══════════════════════════════════════════════════════════ */
-const API_BASE = 'https://corsproxy.io/?https://api.equityanalyze.com/api/chartdatabyquery';
+const API_ORIGIN = 'https://api.equityanalyze.com/api/chartdatabyquery';
 const PERIODS  = 'D-6,W-3,M-3';
 const COLUMNS  = 'open,high,low,close,adj_close,rsi,sma_10-D,sma_20-D,sma_50-D,macd,macdsignal,macdhist,ema_5-D,ema_9-D,ema_26-D,volume,sma_100,sma_200,category';
 
@@ -1016,12 +1016,22 @@ const CAT_CSS = {
 ══════════════════════════════════════════════════════════ */
 async function fetchStocks(symbols) {
   const sym = symbols.join(',');
-  const url = `${API_BASE}?symbols=${encodeURIComponent(sym)}&date=&periods=${PERIODS}&columns=${COLUMNS}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  if (json.result !== 'success') throw new Error(json.error?.message || 'API error');
-  return json.data;
+  const directUrl = `${API_ORIGIN}?symbols=${encodeURIComponent(sym)}&date=&periods=${PERIODS}&columns=${COLUMNS}`;
+  // Try direct first (works if API adds CORS headers), fall back to proxy
+  async function tryFetch(url, parseJson) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = parseJson ? JSON.parse((await res.json()).contents) : await res.json();
+    if (json.result !== 'success') throw new Error(json.error?.message || 'API error');
+    return json.data;
+  }
+  try {
+    return await tryFetch(directUrl, false);
+  } catch(e) {
+    // allorigins wraps response in { contents: "..." }
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(directUrl)}`;
+    return await tryFetch(proxyUrl, true);
+  }
 }
 
 function parseStock(raw) {
