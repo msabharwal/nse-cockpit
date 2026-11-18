@@ -63,11 +63,14 @@ jobs:
       - name: Enrich — fetch news & fundamentals for top picks
         run: python nse_enrich.py
 
-      - name: Commit signals, history, news and fundamentals
+      - name: Bake dashboard HTML
+        run: python bake_cockpit.py
+
+      - name: Commit signals, HTML and fundamentals
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add output/
+          git add output/ NSE_Cockpit.html
           git diff --staged --quiet || git commit -m "Daily signals $(date -u +%Y-%m-%d) [eodhd]"
           git pull --rebase origin main
           git push
