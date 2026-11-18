@@ -950,7 +950,7 @@ body {
 ══════════════════════════════════════════════════════════ */
 const API_ORIGIN = 'https://api.equityanalyze.com/api/chartdatabyquery';
 const PERIODS  = 'D-6,W-3,M-3';
-const COLUMNS  = 'open,high,low,close,adj_close,rsi,sma_10-D,sma_20-D,sma_50-D,macd,macdsignal,macdhist,ema_5-D,ema_9-D,ema_26-D,volume,sma_100,sma_200,category';
+const COLUMNS  = 'date,open,high,low,close,adj_close,rsi,sma_10-D,sma_20-D,sma_50-D,macd,macdsignal,macdhist,ema_5-D,ema_9-D,ema_26-D,volume,sma_100,sma_200,category';
 
 // Nifty 500 representative list — the API returns all NSE, we seed
 // with a solid universe of liquid names. Extend as needed.
@@ -1014,16 +1014,9 @@ const CAT_CSS = {
 /* ══════════════════════════════════════════════════════════
    API
 ══════════════════════════════════════════════════════════ */
-// Format today's date as YYYY-MM-DD in IST
-function todayIST() {
-  const d = new Date(new Date().toLocaleString('en-US', {timeZone:'Asia/Kolkata'}));
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-
 async function fetchStocks(symbols) {
   const sym = symbols.join(',');
-  const date = todayIST();
-  const directUrl = `${API_ORIGIN}?symbols=${encodeURIComponent(sym)}&date=${date}&periods=${PERIODS}&columns=${COLUMNS}`;
+  const directUrl = `${API_ORIGIN}?symbols=${encodeURIComponent(sym)}&date=&periods=${PERIODS}&columns=${COLUMNS}`;
 
   // Try direct first; filter response to only requested symbols
   async function extractData(json) {
@@ -1119,7 +1112,7 @@ function parseStock(raw) {
     weekly,
     monthly,
     expiry:   latest.expirydatetime || '',
-    date:     latest.expirydatetime || '',
+    date:     latest.date || latest.expirydatetime || '',
   };
 }
 
