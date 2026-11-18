@@ -1060,11 +1060,11 @@ function parseStock(raw) {
   // Each period object has a .data array of candles
   const periods  = raw.data || [];                       // array of period objects
 
-  // DEBUG: log first stock structure so we can see real field names
-  if (raw.symbol === 'RELIANCE.NSE' && periods.length > 0) {
-    const d0 = periods[0];
-    const lastCandle = (d0.data || []).slice(-1)[0];
-    console.log('[parseStock DEBUG] periods[0].period =', d0.period, '| candle keys:', Object.keys(lastCandle||{}), '| category =', lastCandle?.category, '| close =', lastCandle?.close);
+  // DEBUG: log full raw structure for first stock
+  if (raw.symbol === 'RELIANCE.NSE') {
+    console.log('[RAW KEYS]', Object.keys(raw));
+    console.log('[RAW.data type]', typeof raw.data, Array.isArray(raw.data) ? 'isArray len='+raw.data.length : '');
+    console.log('[RAW full]', JSON.stringify(raw).slice(0, 500));
   }
 
   const dailyObj = periods.find(p => p.period === 'Daily' || p.period === 'D') || periods[0] || {};
