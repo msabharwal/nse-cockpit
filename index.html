@@ -1015,38 +1015,42 @@ const CAT_CSS = {
    API
 ══════════════════════════════════════════════════════════ */
 // Fetch a single batch (≤20 symbols) from the API
-async function fetchBatch(symbols) {
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function fetchBatch(symbols, retries = 3) {
   const sym = symbols.join(',');
   const url = `${API_ORIGIN}?symbols=${sym}&date=&periods=${PERIODS}&columns=${COLUMNS}`;
-  const res = await fetch(url, { mode: 'cors' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  console.log(`[batch] symbols=${symbols.length} result=${json.result} data=${json.data?.length} err=${json.error?.message||''}`);
-  if (json.result !== 'success') {
-    // Log full response for debugging
-    console.warn('[batch error response]', JSON.stringify(json).slice(0, 300));
-    throw new Error(json.error?.message || `result=${json.result}`);
-  }
-  const requested = new Set(symbols);
-  const all = json.data || [];
-  const filtered = all.filter(r => requested.has(r.symbol));
-  return filtered.length ? filtered : all;
-}
 
-// Fetch all symbols in batches of 20
-async function fetchStocks(symbols) {
-  const BATCH = 20;
-  const results = [];
-  for (let i = 0; i < symbols.length; i += BATCH) {
-    const batch = symbols.slice(i, i + BATCH);
+  for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const rows = await fetchBatch(batch);
-      results.push(...rows);
+      const res = await fetch(url, { mode: 'cors' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (json.result !== 'success') {
+        const msg = json.error?.message || `result=${json.result}`;
+        console.warn(`[batch] attempt ${attempt} failed: ${msg}`);
+        if (attempt < retries) { await sleep(2000 * attempt); continue; }
+        throw new Error(msg);
+      }
+      const requested = new Set(symbols);
+      const all = json.data || [];
+      const filtered = all.filter(r => requested.has(r.symbol));
+      console.log(`[batch] ok symbols=${symbols.length} got=${all.length} matched=${filtered.length}`);
+      return filtered.length ? filtered : all;
     } catch(e) {
-      console.warn(`[fetchStocks] batch ${i}-${i+BATCH} failed:`, e.message);
+      if (attempt < retries) {
+        console.warn(`[batch] attempt ${attempt} error: ${e.message} — retrying in ${2*attempt}s`);
+        await sleep(2000 * attempt);
+      } else {
+        throw e;
+      }
     }
   }
-  return results;
+}
+
+// fetchStocks used by pulse ticker and stock detail panel
+async function fetchStocks(symbols) {
+  return fetchBatch(symbols);
 }
 
 function parseStock(raw) {
@@ -1142,9 +1146,10 @@ async function loadAll() {
       renderPicks(stocks);
       renderUniverse(stocks);
       renderSummary(stocks);
-      await new Promise(r => setTimeout(r, 0)); // yield to browser
+      await sleep(300); // small pause between batches — be kind to the API
     } catch(e) {
       console.warn(`[loadAll] batch ${i}-${i+BATCH} error:`, e.message);
+      await sleep(1000); // longer pause after failure
     }
   }
 
