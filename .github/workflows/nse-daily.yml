@@ -71,7 +71,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Pull latest first so manual commits (hotfixes) don't cause conflicts
+          git pull --rebase origin main
           git add output/ NSE_Cockpit.html
           git diff --staged --quiet || git commit -m "Daily signals $(date -u +%Y-%m-%d) [eodhd]"
-          git pull --rebase origin main
           git push
