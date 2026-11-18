@@ -1124,8 +1124,8 @@ async function loadAll() {
   stockData = {};
 
   const updateProgress = (msg) => {
-    const el = document.getElementById('progress-label');
-    if (el) el.textContent = msg;
+    // Update any visible progress label (may be in picks or universe container)
+    document.querySelectorAll('#progress-label').forEach(el => el.textContent = msg);
   };
 
   const BATCH = 20;
@@ -1142,8 +1142,9 @@ async function loadAll() {
       }
       // Re-render after each batch so user sees incremental results
       const stocks = Object.values(stockData);
+      const stillLoading = (i + BATCH) < total;
       updateBadges(stocks);
-      renderPicks(stocks);
+      renderPicks(stocks, stillLoading);
       renderUniverse(stocks);
       renderSummary(stocks);
       await sleep(300); // small pause between batches — be kind to the API
@@ -1154,6 +1155,12 @@ async function loadAll() {
   }
 
   setLoading(false);
+  // Final render with complete data
+  const finalStocks = Object.values(stockData);
+  updateBadges(finalStocks);
+  renderPicks(finalStocks, false);
+  renderUniverse(finalStocks);
+  renderSummary(finalStocks);
   renderWatchlist();
   console.log('[loadAll done] total stocks:', Object.keys(stockData).length);
 }
@@ -1217,7 +1224,7 @@ function updateBadges(stocks) {
 /* ══════════════════════════════════════════════════════════
    PICKS VIEW
 ══════════════════════════════════════════════════════════ */
-function renderPicks(stocks) {
+function renderPicks(stocks, stillLoading = false) {
   const portSize = parseFloat(document.getElementById('portfolio-size')?.value) || 100000;
   const topPicks = stocks
     .filter(s => ['SUPER TREND','VERY BULLISH','BULLISH'].includes(s.category) && s.close > 0)
@@ -1225,8 +1232,9 @@ function renderPicks(stocks) {
     .slice(0, 15);
 
   if (!topPicks.length) {
-    document.getElementById('picks-container').innerHTML =
-      '<div class="loading-state" style="color:var(--fg3)">No bullish picks found in current data</div>';
+    document.getElementById('picks-container').innerHTML = stillLoading
+      ? `<div class="loading-state"><div class="loader"></div><span id="progress-label">Scanning for picks…</span></div>`
+      : '<div class="loading-state" style="color:var(--fg3)">No bullish picks found in current data</div>';
     return;
   }
 
