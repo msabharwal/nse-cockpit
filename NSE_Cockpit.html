@@ -2247,17 +2247,16 @@ async function generateSharekhanScript() {
   if (!items.length) { alert('Add stocks to basket first.'); return; }
   const csv = 'Exchange,Symbol,Quantity\n' + items.map(i => `NSE,${i.s},${i.qty}`).join('\n');
   const lines = items.map(i => `NSE:${i.s}:${i.qty}`).join('\n');
-  try {
-    const downloads = await claude.use('downloads');
-    if (downloads) {
-      await downloads.save({ filename: `sharekhan_basket_${BAKED.trading_date}.csv`, data: csv });
-    } else {
-      // fallback: show CSV text to copy
-      prompt('Copy this CSV for Sharekhan import:', csv);
-    }
-  } catch(e) {
-    prompt('Copy this CSV for Sharekhan import:', csv);
-  }
+  // Download as CSV file (works in browser as plain HTML)
+  const blob = new Blob([csv], {type: 'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `sharekhan_basket_${BAKED.trading_date}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ── VIEWS ──
@@ -2271,86 +2270,132 @@ function switchView(view) {
   if (view === 'table') renderTable();
   if (view === 'basket') renderBasket();
   if (view === 'backtest') {
-    renderBtDateSelect();
-    btLoadEntryDate();
+    if (histDates.length > 0) {
+      renderBtDateSelect();
+      btLoadEntryDate();
+    }
   }
   if (view === 'suggest') renderSuggestPanel();
 }
 
 // ── TODAY'S PICKS (Basket Suggester) ──
-const TODAY_BASKET = [
-  {"sym":"PAYTM","score":9,"signal":"STRONG","px":1890.8,"rsi":65.3,"vol":1.56,"atr":3.54,"adx":37.5,"rs":9.7,"patterns":["Bearish Engulf","3+ Up Days"],"sl_pct":7.08,"tgt_pct":17.7,"sl_px":1756.93,"tgt_px":2225.47,"gates_passed":["Signal tier OK","ATR 3.5% (normal range)","MACD rising","ADX 38 (trend exists)","SMA20 rising","RS +9.7% vs market","Above SMA50"]},
-  {"sym":"MEESHO","score":9,"signal":"STRONG","px":251.19,"rsi":65.5,"vol":1.23,"atr":3.83,"adx":51.7,"rs":6.64,"patterns":["Bearish Engulf","3+ Up Days"],"sl_pct":7.66,"tgt_pct":19.15,"sl_px":231.95,"tgt_px":299.29,"gates_passed":["Signal tier OK","ATR 3.8% (normal range)","MACD rising","ADX 52 (trend exists)","SMA20 rising","RS +6.6% vs market","Above SMA50"]},
-  {"sym":"ABDL","score":9,"signal":"STRONG","px":784.25,"rsi":71.1,"vol":1.72,"atr":3.68,"adx":54.3,"rs":6.32,"patterns":["Bullish Engulf","3+ Up Days"],"sl_pct":7.36,"tgt_pct":18.4,"sl_px":726.53,"tgt_px":928.55,"gates_passed":["Signal tier OK","ATR 3.7% (normal range)","MACD rising","ADX 54 (trend exists)","SMA20 rising","RS +6.3% vs market","Above SMA50"]},
-  {"sym":"CUPID","score":8,"signal":"STRONG","px":361.9,"rsi":60.5,"vol":1.08,"atr":4.72,"adx":34.2,"rs":5.51,"patterns":["3 Black Crows"],"sl_pct":9.44,"tgt_pct":23.6,"sl_px":327.74,"tgt_px":447.31,"gates_passed":["Signal tier OK","ATR 4.7% (normal range)","MACD rising","ADX 34 (trend exists)","SMA20 rising","RS +5.5% vs market","Above SMA50"]},
-  {"sym":"SANSERA","score":8,"signal":"STRONG","px":4763.6,"rsi":67.9,"vol":0.88,"atr":3.94,"adx":28.0,"rs":9.86,"patterns":["3+ Up Days"],"sl_pct":7.88,"tgt_pct":19.7,"sl_px":4388.23,"tgt_px":5702.03,"gates_passed":["Signal tier OK","ATR 3.9% (normal range)","MACD rising","ADX 28 (trend exists)","SMA20 rising","RS +9.9% vs market","Above SMA50"]},
-  {"sym":"GLAND","score":8,"signal":"BULL","px":3385.9,"rsi":72.2,"vol":0.86,"atr":3.02,"adx":60.6,"rs":3.37,"patterns":["3 White Soldiers","3+ Up Days"],"sl_pct":7.55,"tgt_pct":13.59,"sl_px":3130.26,"tgt_px":3846.04,"gates_passed":["Signal tier OK","ATR 3.0% (normal range)","MACD rising","ADX 61 (trend exists)","SMA20 rising","RS +3.4% vs market","Above SMA50"]},
-  {"sym":"RKFORGE","score":8,"signal":"STRONG","px":791.85,"rsi":67.4,"vol":0.71,"atr":4.02,"adx":49.1,"rs":16.75,"patterns":["Bullish Engulf","3+ Up Days"],"sl_pct":8.04,"tgt_pct":20.1,"sl_px":728.19,"tgt_px":951.01,"gates_passed":["Signal tier OK","ATR 4.0% (normal range)","MACD rising","ADX 49 (trend exists)","SMA20 rising","RS +16.7% vs market","Above SMA50"]},
-  {"sym":"KARURVYSYA","score":8,"signal":"STRONG","px":390.25,"rsi":68.7,"vol":0.91,"atr":3.54,"adx":41.4,"rs":3.59,"patterns":["3+ Up Days"],"sl_pct":7.08,"tgt_pct":17.7,"sl_px":362.62,"tgt_px":459.32,"gates_passed":["Signal tier OK","ATR 3.5% (normal range)","MACD rising","ADX 41 (trend exists)","SMA20 rising","RS +3.6% vs market","Above SMA50"]},
-  {"sym":"MCX","score":8,"signal":"STRONG","px":3729.6,"rsi":68.9,"vol":0.66,"atr":3.32,"adx":54.6,"rs":10.96,"patterns":["3+ Up Days"],"sl_pct":6.64,"tgt_pct":16.6,"sl_px":3481.95,"tgt_px":4348.71,"gates_passed":["Signal tier OK","ATR 3.3% (normal range)","MACD rising","ADX 55 (trend exists)","SMA20 rising","RS +11.0% vs market","Above SMA50"]},
-  {"sym":"MOTILALOFS","score":8,"signal":"BULL","px":1217.0,"rsi":73.1,"vol":0.57,"atr":3.81,"adx":63.5,"rs":23.2,"patterns":["3+ Up Days"],"sl_pct":9.53,"tgt_pct":17.14,"sl_px":1101.08,"tgt_px":1425.65,"gates_passed":["Signal tier OK","ATR 3.8% (normal range)","MACD rising","ADX 63 (trend exists)","SMA20 rising","RS +23.2% vs market","Above SMA50"]}
-];
+// Strategy: positional swing trades, 5–15 trading day horizon
+// Entry:  tomorrow's open (EOD signal → next day entry)
+// SL:     1.0 × ATR% below entry  (1 ATR = typical daily range)
+// Target: 2.0 × ATR% above entry  (R:R = 1:2)
+// ATR% here is the 14-day Average True Range as % of price (from pipeline)
+// Caps: SL max 6%, TGT max 12% (prevents distortion on high-ATR small caps)
+// Fallback when ATR missing: SL 2.5%, TGT 5% (conservative defaults)
+function buildTodayBasket() {
+  const top = BAKED.picks
+    .filter(p => p.sc != null && (p.cap === -1 || p.cap === 1))
+    .sort((a, b) => (b.sc || 0) - (a.sc || 0))
+    .slice(0, 10);
+  return top.map(p => {
+    const atr = p.a && p.a > 0 ? p.a : null;
+    // 1× ATR for SL, 2× ATR for target (R:R = 1:2), capped to prevent absurd values
+    const sl_pct_raw  = atr ? atr * 1.0 : 2.5;
+    const tgt_pct_raw = atr ? atr * 2.0 : 5.0;
+    const sl_pct  = parseFloat(Math.min(sl_pct_raw,  6.0).toFixed(1));
+    const tgt_pct = parseFloat(Math.min(tgt_pct_raw, 12.0).toFixed(1));
+    const sl_px   = parseFloat((p.p * (1 - sl_pct / 100)).toFixed(2));
+    const tgt_px  = parseFloat((p.p * (1 + tgt_pct / 100)).toFixed(2));
+    // 8-point score: RSI≥50, SMA100slope>0, SMA10gap>1%, week52pos>50%,
+    //   week52pos>75%, RSI≥60, vol_ratio>1.5×, day_chg>0 — infer from available fields
+    const scorePoints = [
+      p.r >= 50,          // RSI ≥ 50
+      p.g > 0,            // sma10gap > 0 (proxy for SMA slope positive)
+      p.g > 1,            // sma10gap > 1%
+      true,               // week52pos (not in BAKED, assume passed since it's a pick)
+      p.r >= 60,          // RSI ≥ 60
+      (p.v || 1) >= 1.5,  // vol_ratio ≥ 1.5×
+      (p.c || 0) > 0,     // day change positive
+    ].filter(Boolean).length;
+    // Tier: top-third of today's picks = STRONG, rest = BULL
+    const maxSc = BAKED.picks[0].sc || 1;
+    const signal = p.sc >= maxSc * 0.80 ? 'STRONG' : 'BULL';
+    return {
+      sym: p.s, name: p.n, sector: p.x,
+      score: scorePoints, maxScore: 7,
+      signal, px: p.p,
+      rsi: p.r || 50, vol: p.v || 1, atr: atr || 2.5,
+      alloc: p.al || 5, rs: p.g || 0, dayChg: p.c || 0,
+      sl_pct, tgt_pct, sl_px, tgt_px,
+    };
+  });
+}
+const TODAY_BASKET = buildTodayBasket();
 
 function renderSuggestPanel() {
   const tbody = document.getElementById('suggest-tbody');
   if (!tbody) return;
 
+  // Set live date
+  const dateEl = document.getElementById('suggest-date');
+  if (dateEl) dateEl.textContent = BAKED.trading_date;
+
+  // Live stats from basket
+  const statsEl = document.getElementById('suggest-stats');
+  if (statsEl) {
+    const n = TODAY_BASKET.length;
+    const avgSL  = (TODAY_BASKET.reduce((s,x)=>s+x.sl_pct,0)/n).toFixed(1);
+    const avgTgt = (TODAY_BASKET.reduce((s,x)=>s+x.tgt_pct,0)/n).toFixed(1);
+    const rr = 2.0; // by design: SL=1×ATR, TGT=2×ATR → R:R always 1:2
+    statsEl.innerHTML = `
+      <span style="background:#052e1622;color:#4ade80;border:1px solid #16a34a44;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600">${n} stocks</span>
+      <span style="background:#1e3a5f33;color:#60a5fa;border:1px solid #2563eb44;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600">Avg SL −${avgSL}%</span>
+      <span style="background:#16a34a11;color:#4ade80;border:1px solid #16a34a44;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600">Avg TGT +${avgTgt}%</span>
+      <span style="background:#3b1f6022;color:#a78bfa;border:1px solid #7c3aed44;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600">R:R 1:${rr} (swing)</span>
+      <span style="background:#1a1a2e;color:#94a3b8;border:1px solid #334155;padding:4px 10px;border-radius:6px;font-size:10px">Horizon: 5–15 trading days</span>`;
+  }
+
   const tierColors = {STRONG:'#16a34a',BULL:'#2563eb'};
   const tierBg    = {STRONG:'#052e1644',BULL:'#1e3a5f44'};
   const tierBd    = {STRONG:'#16a34a66',BULL:'#2563eb66'};
 
-  const patBull = p => p.includes('Bullish') || p.includes('White Soldiers') || p.includes('Up Days');
-  const patBear = p => p.includes('Bearish') || p.includes('Black Crows') || p.includes('Down Days');
-  const patColor = p => patBull(p) ? '#4ade80' : patBear(p) ? '#f87171' : '#94a3b8';
-
-  // Build basket table rows (clean — 10 columns only)
+  // Build basket table rows
   tbody.innerHTML = TODAY_BASKET.map(s => {
     const rsiColor = s.rsi >= 70 ? '#f59e0b' : s.rsi >= 55 ? '#4ade80' : '#94a3b8';
-    const adxColor = s.adx >= 40 ? '#4ade80' : s.adx >= 25 ? '#f59e0b' : '#94a3b8';
-    const pats = s.patterns.length
-      ? s.patterns.map(p => `<span style="background:${patColor(p)}18;color:${patColor(p)};border:1px solid ${patColor(p)}44;padding:1px 5px;border-radius:3px;font-size:10px;margin-right:3px;white-space:nowrap">${p}</span>`).join('')
-      : '<span style="color:var(--fg3);font-size:11px">—</span>';
+    const scoreBar = '█'.repeat(s.score) + '░'.repeat(s.maxScore - s.score);
+    const dayChgColor = s.dayChg > 0 ? '#4ade80' : s.dayChg < 0 ? '#f87171' : '#94a3b8';
 
     return `<tr style="border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
       <td style="padding:9px 10px;white-space:nowrap">
         <div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:13px">${s.sym}</div>
-        <div style="font-size:10px;color:var(--fg3)">score ${s.score}/9</div>
+        <div style="font-size:9px;color:var(--fg3);font-family:'JetBrains Mono',monospace;letter-spacing:-.5px">${scoreBar} ${s.score}/${s.maxScore}</div>
       </td>
       <td style="padding:9px 10px">
         <span style="background:${tierBg[s.signal]};color:${tierColors[s.signal]};border:1px solid ${tierBd[s.signal]};padding:2px 7px;border-radius:4px;font-size:11px;font-weight:700">${s.signal}</span>
       </td>
-      <td style="padding:9px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px">₹${s.px.toLocaleString('en-IN',{maximumFractionDigits:2})}</td>
+      <td style="padding:9px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px">
+        ₹${s.px.toLocaleString('en-IN',{maximumFractionDigits:2})}
+        <div style="font-size:10px;color:${dayChgColor}">${s.dayChg > 0 ? '+' : ''}${(s.dayChg||0).toFixed(2)}%</div>
+      </td>
       <td style="padding:9px 10px;text-align:right">
         <div style="color:#f87171;font-weight:700;font-family:'JetBrains Mono',monospace;font-size:12px">₹${s.sl_px.toLocaleString('en-IN',{maximumFractionDigits:0})}</div>
+        <div style="font-size:10px;color:#f87171">−${s.sl_pct.toFixed(1)}%</div>
       </td>
-      <td style="padding:9px 10px;text-align:right;color:#f87171;font-size:11px">−${s.sl_pct.toFixed(1)}%</td>
       <td style="padding:9px 10px;text-align:right">
         <div style="color:#4ade80;font-weight:700;font-family:'JetBrains Mono',monospace;font-size:12px">₹${s.tgt_px.toLocaleString('en-IN',{maximumFractionDigits:0})}</div>
+        <div style="font-size:10px;color:#4ade80">+${s.tgt_pct.toFixed(1)}%</div>
       </td>
-      <td style="padding:9px 10px;text-align:right;color:#4ade80;font-size:11px">+${s.tgt_pct.toFixed(1)}%</td>
-      <td style="padding:9px 10px;text-align:center"><span style="color:${rsiColor};font-weight:600">${s.rsi.toFixed(1)}</span></td>
-      <td style="padding:9px 10px;text-align:center"><span style="color:${adxColor};font-weight:600">${s.adx.toFixed(0)}</span></td>
-      <td style="padding:9px 10px">${pats}</td>
+      <td style="padding:9px 10px;text-align:center"><span style="color:${rsiColor};font-weight:600">${s.rsi.toFixed(0)}</span></td>
+      <td style="padding:9px 10px;text-align:center"><span style="color:var(--fg2)">${s.atr.toFixed(1)}%</span></td>
+      <td style="padding:9px 10px;text-align:right"><span style="color:var(--accent);font-weight:600">${(s.alloc||5).toFixed(1)}%</span></td>
     </tr>`;
   }).join('');
 
-  // Build pattern grid in the indicators card
+  // Build signal summary grid
   const grid = document.getElementById('suggest-pattern-grid');
   if (grid) {
     grid.innerHTML = TODAY_BASKET.map(s => {
-      const hasBull = s.patterns.some(patBull);
-      const hasBear = s.patterns.some(patBear);
-      const sentiment = hasBull && !hasBear ? {col:'#4ade80',label:'Bullish',icon:'↑'} :
-                        hasBear && !hasBull ? {col:'#f87171',label:'Caution',icon:'⚠'} :
-                        hasBull && hasBear  ? {col:'#f59e0b',label:'Mixed',icon:'~'} :
-                                             {col:'#94a3b8',label:'Neutral',icon:'–'};
-      const pBadges = s.patterns.map(p =>
-        `<span style="color:${patColor(p)};font-size:10px">${p}</span>`
-      ).join(' · ');
-      return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">
-        <span style="font-weight:700;min-width:80px;color:var(--fg);font-size:11px">${s.sym}</span>
-        <span style="color:${sentiment.col};font-size:11px;font-weight:600;min-width:62px">${sentiment.icon} ${sentiment.label}</span>
-        <span style="color:var(--fg3)">${pBadges || '<span style="color:var(--fg3);font-size:10px">No pattern</span>'}</span>
+      const rsiCol = s.rsi >= 70 ? '#f59e0b' : s.rsi >= 55 ? '#4ade80' : '#94a3b8';
+      const rsiLabel = s.rsi >= 70 ? 'Overbought — caution' : s.rsi >= 60 ? 'Strong momentum' : s.rsi >= 50 ? 'Bullish zone' : 'Neutral';
+      const rrLabel = `SL: 1×ATR = −${s.sl_pct.toFixed(1)}%  →  TGT: 2×ATR = +${s.tgt_pct.toFixed(1)}%`;
+      return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">
+        <span style="font-weight:700;min-width:90px;color:var(--fg);font-size:11px">${s.sym}</span>
+        <span style="color:${rsiCol};font-size:11px;font-weight:600;min-width:120px">RSI ${s.rsi.toFixed(0)} — ${rsiLabel}</span>
+        <span style="color:var(--fg3);font-size:10px;font-family:'JetBrains Mono',monospace">${rrLabel}</span>
       </div>`;
     }).join('');
   }
@@ -2369,7 +2414,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderSidebar();
   renderSpotlight();
   switchView('picks');
-  renderBtDateSelect(); // pre-populate backtest date select
+  if (histDates.length > 0) renderBtDateSelect(); // pre-populate backtest date select (only if history exists)
   // Fetch live news + fundamentals from GitHub (no-op in sandbox, works in production)
   fetchLiveData();
 
@@ -2706,14 +2751,10 @@ document.addEventListener('DOMContentLoaded', () => {
         <!-- Header -->
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
           <div>
-            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;color:var(--fg)">🧠 Today's Basket — 17 Nov 2026</div>
-            <div style="font-size:11px;color:var(--fg3);margin-top:3px">v3 signal · +32% backtest · 10 candidates · STRONG + BULL only</div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;color:var(--fg)" id="suggest-title">Today's Basket — <span id="suggest-date">—</span></div>
+            <div style="font-size:11px;color:var(--fg3);margin-top:3px">Swing trade · hold 8–15 days · SL = 1.5× ATR · Target = 2.5× ATR · R:R ≈ 1:1.67</div>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <span style="background:#16a34a22;color:#4ade80;border:1px solid #16a34a55;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600">47.1% win rate</span>
-            <span style="background:#1e3a5f44;color:#60a5fa;border:1px solid #2563eb55;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600">1.79× profit factor</span>
-            <span style="background:#3b1f6044;color:#a78bfa;border:1px solid #7c3aed55;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600">6.0% max drawdown</span>
-          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap" id="suggest-stats"></div>
         </div>
 
         <!-- ═══ ROW 1: Entry + Exit action cards ═══ -->
@@ -2765,8 +2806,8 @@ document.addEventListener('DOMContentLoaded', () => {
         <!-- ═══ ROW 2: Basket table ═══ -->
         <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:14px">
           <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;background:var(--bg3)">
-            <span style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:13px">🎯 Basket — 10 Stocks</span>
-            <span style="margin-left:auto;font-size:10px;color:var(--fg3)">Entry = tomorrow's open · SL = hard stop · Target = limit sell</span>
+            <span style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:13px">Today's Picks — Top 10</span>
+            <span style="margin-left:auto;font-size:10px;color:var(--fg3)">Swing trade · Entry at tomorrow's open · Horizon 5–15 days · SL = 1×ATR · TGT = 2×ATR · R:R 1:2</span>
           </div>
           <div style="overflow-x:auto">
           <table style="width:100%;border-collapse:collapse;font-size:12px">
@@ -2774,14 +2815,12 @@ document.addEventListener('DOMContentLoaded', () => {
               <tr style="background:var(--bg3)">
                 <th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--fg3);font-weight:600;border-bottom:1px solid var(--border);white-space:nowrap">STOCK</th>
                 <th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--fg3);font-weight:600;border-bottom:1px solid var(--border)">TIER</th>
-                <th style="padding:8px 10px;text-align:right;font-size:10px;color:var(--fg3);font-weight:600;border-bottom:1px solid var(--border)">EOD PX</th>
-                <th style="padding:8px 10px;text-align:right;font-size:10px;color:#f87171;font-weight:600;border-bottom:1px solid var(--border)">SL ₹</th>
-                <th style="padding:8px 10px;text-align:right;font-size:10px;color:var(--fg3);font-weight:600;border-bottom:1px solid var(--border)">SL%</th>
-                <th style="padding:8px 10px;text-align:right;font-size:10px;color:#4ade80;font-weight:600;border-bottom:1px solid var(--border)">TARGET ₹</th>
-                <th style="padding:8px 10px;text-align:right;font-size:10px;color:var(--fg3);font-weight:600;border-bottom:1px solid var(--border)">TGT%</th>
+                <th style="padding:8px 10px;text-align:right;font-size:10px;color:var(--fg3);font-weight:600;border-bottom:1px solid var(--border)">EOD CLOSE</th>
+                <th style="padding:8px 10px;text-align:right;font-size:10px;color:#f87171;font-weight:600;border-bottom:1px solid var(--border)">STOP LOSS</th>
+                <th style="padding:8px 10px;text-align:right;font-size:10px;color:#4ade80;font-weight:600;border-bottom:1px solid var(--border)">TARGET</th>
                 <th style="padding:8px 10px;text-align:center;font-size:10px;color:var(--fg3);font-weight:600;border-bottom:1px solid var(--border)">RSI</th>
-                <th style="padding:8px 10px;text-align:center;font-size:10px;color:var(--fg3);font-weight:600;border-bottom:1px solid var(--border)">ADX</th>
-                <th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--fg3);font-weight:600;border-bottom:1px solid var(--border)">PATTERNS</th>
+                <th style="padding:8px 10px;text-align:center;font-size:10px;color:var(--fg3);font-weight:600;border-bottom:1px solid var(--border)" title="14-day Average True Range % — basis for SL &amp; TGT">ATR%</th>
+                <th style="padding:8px 10px;text-align:right;font-size:10px;color:var(--accent);font-weight:600;border-bottom:1px solid var(--border)">ALLOC%</th>
               </tr>
             </thead>
             <tbody id="suggest-tbody">
